@@ -6,11 +6,13 @@ native ARM Linux executable, and it also runs on a normal PC for development.
 
 > **Pick up and play in seconds.**
 
-**Status:** Phase 1 of 8 is complete: the engine skeleton, input, the player
-and movement. See [TODO.md](TODO.md) for the roadmap.
+**Status:** Phases 1–2 of 8 are complete: the engine, input and movement,
+plus tile maps, collision, a scrolling camera, coins and a level exit. See
+[TODO.md](TODO.md) for the roadmap.
 
-![Phase 1 title screen](docs/title.png)
-![Phase 1 sandbox](docs/sandbox.png)
+![Title screen](docs/title.png)
+![Gameplay](docs/gameplay.png)
+![Level clear](docs/level_clear.png)
 
 ---
 
@@ -27,6 +29,7 @@ and movement. See [TODO.md](TODO.md) for the roadmap.
 | Select        | Backspace or Tab    | Level info                      |
 | Select + Start (hold) | window close | Quit                            |
 | Select + L1   | F1                  | Toggle debug overlay            |
+| R1 *(debug on)* | W *(debug on)*    | Warp next to the level exit     |
 | –             | F11                 | Toggle fullscreen               |
 
 The spec's keyboard layout puts the X/Y buttons on the **A** and **S** keys,
@@ -94,10 +97,13 @@ cd build && ctest --output-on-failure
 
 * `unit_tests` covers the config parser, input bindings and latching, the
   joystick event mapping, player physics (acceleration, dash, hop, knockback),
-  save round-trips and data-table validation.
+  map parsing, tile collision (sliding, no tunnelling, corner nudge), the
+  camera, coins, save round-trips, data-table validation, and a reachability
+  check that every coin and the exit can be reached in the built-in level.
 * `smoke_test` runs the real game loop headless (`SDL_VIDEODRIVER=dummy`). It
-  plays a scripted run through title → walk → dash → hop → pause → resume
-  and checks that the player responds correctly.
+  plays a scripted run: title → walk (collecting coins) → dash → hop → pause
+  → resume → debug-warp → walk into the flag. It checks each step, including
+  that the level clears.
 
 To get screenshots without a display:
 `SDL_VIDEODRIVER=dummy ./build/pocketdash --windowed --scale 1 --frames 60 --screenshot shot.png`
@@ -129,8 +135,8 @@ tools/build-arkos.sh          # -> dist/PocketDash/
 BASE_IMAGE=mirror.gcr.io/library/ubuntu:20.04 tools/build-arkos.sh
 ```
 
-This has been verified: the resulting binary needs at most `GLIBC_2.17` and
-`GLIBCXX_3.4.26`, and the stripped binary is about 140 KB. It links against
+This has been verified: the resulting binary needs at most `GLIBC_2.27` and
+`GLIBCXX_3.4.26`, and the stripped binary is about 150 KB. It links against
 the system SDL2, SDL2_image, SDL2_ttf and SDL2_mixer. If a firmware image
 lacks one of these, put the aarch64 `.so` files in `PocketDash/libs/`. The
 launcher adds that folder to `LD_LIBRARY_PATH`.
@@ -186,14 +192,19 @@ PocketDash/
 │   ├── Player.*            movement, dash, hop, knockback, rendering
 │   ├── Scene.h             scene interface
 │   ├── TitleScene.*        title screen (main menu in Phase 6)
-│   ├── PlayScene.*         gameplay (Phase 1: sandbox arena)
+│   ├── PlayScene.*         gameplay: level, camera, coins, exit, pause, results
+│   ├── Level.*             tile map, ASCII map parser, tile collision (moveAndCollide)
+│   ├── BuiltinLevels.*     levels compiled into the game (test meadow)
+│   ├── TileSet.*           per-world procedural tile atlas + visible-tile renderer
+│   ├── Camera.*            dead-zone follow camera with look-ahead and shake
+│   ├── Collectibles.*      coins (stars/gems in Phase 4)
+│   ├── Effects.*           fixed-size pool of sparkles and dust
 │   ├── AudioManager.*      SDL2_mixer wrapper, silent when audio/files are missing
 │   ├── SaveManager.*       INI-style key=value store, settings persistence
 │   ├── Sprites.*           programmatic placeholder pixel art (PNG overrides)
 │   ├── UI.*                built-in bitmap font, panels
 │   ├── Draw.*              shape helpers
 │   ├── World.*             the 7 world definitions (themes, rules)
-│   ├── Level.*             tile map model (loader in Phase 5)
 │   ├── Enemy.*             enemy model (behaviours in Phase 3)
 │   ├── PowerUp.*           power-up types and timers
 │   └── Math.h, Constants.h, Settings.h, SdlPtr.h
@@ -213,8 +224,12 @@ PocketDash/
   which avoids micro-stutter.
 * **640×480 logical resolution** with nearest-neighbour, integer scaling. On
   the R36S this maps 1:1.
-* **No allocations in the frame loop.** Backgrounds are baked into textures
-  once, text uses a single font atlas, and debug strings use stack buffers.
+* **No allocations in the frame loop.** Tile art is baked into one atlas,
+  text uses a single font atlas, effects live in a fixed pool, and debug
+  strings use stack buffers. Only visible tiles are drawn.
+* **Levels are ASCII maps** (`#` hedge, `T` tree, `~` water, `=` bridge,
+  `c` coin, `P` spawn, `E` exit, … — see `src/Level.h`). Phase 5 loads them
+  from `assets/levels/`.
 * **Input presses are latched** until a simulation step consumes them, so a
   tap shorter than a frame is never lost and never seen twice.
 * **RAII everywhere.** SDL handles live in `std::unique_ptr` with custom

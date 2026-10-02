@@ -184,7 +184,7 @@ int Game::run() {
     Uint64 last = SDL_GetPerformanceCounter();
     fpsWindowStart_ = last;
     double accumulator = 0.0;
-    const int maxFrames = options_.maxFrames > 0 ? options_.maxFrames : (options_.smokeTest ? 220 : 0);
+    const int maxFrames = options_.maxFrames > 0 ? options_.maxFrames : (options_.smokeTest ? 260 : 0);
 
     while (running_) {
         const Uint64 frameStart = SDL_GetPerformanceCounter();
@@ -268,7 +268,7 @@ void Game::renderDebugOverlay() {
     DebugInfo info;
     scene_->fillDebugInfo(info);
 
-    char lines[9][96];
+    char lines[10][96];
     int n = 0;
     std::snprintf(lines[n++], 96, "FPS %.0f  %.1fMS  %s", fps_, frameMs_, rendererName_);
     std::snprintf(lines[n++], 96, "SCENE %s  LEVEL %s", scene_->name(), info.levelId);
@@ -276,7 +276,8 @@ void Game::renderDebugOverlay() {
         std::snprintf(lines[n++], 96, "PLAYER %.1f,%.1f Z %.1f", info.playerPos.x, info.playerPos.y, info.playerZ);
         std::snprintf(lines[n++], 96, "VEL %.0f,%.0f", info.playerVel.x, info.playerVel.y);
     }
-    std::snprintf(lines[n++], 96, "ENEMIES %d", info.enemyCount);
+    std::snprintf(lines[n++], 96, "ENEMIES %d  COINS %d/%d", info.enemyCount, info.coins, info.coinsTotal);
+    if (info.hasCamera) std::snprintf(lines[n++], 96, "CAMERA %.0f,%.0f", info.camera.x, info.camera.y);
     std::snprintf(lines[n++], 96, "PAD %.40s", input_.controllerName().c_str());
     char held[48];
     input_.describeHeldButtons(held, sizeof(held));
@@ -327,11 +328,13 @@ void Game::applySmokeTestInput() {
         {Action::Right, 20, 80},   // walk right for one second
         {Action::B, 90, 92},       // dash
         {Action::A, 110, 112},     // hop
-        {Action::Up, 130, 160},    // diagonal walk
+        {Action::Down, 130, 160},  // diagonal walk (the spawn is in the top row, so go down)
         {Action::Left, 130, 160},
         {Action::Start, 170, 172}, // pause
         {Action::Down, 175, 177},  // move the pause cursor (must not move the player)
         {Action::Start, 185, 187}, // resume
+        {Action::R1, 190, 192},    // debug warp next to the exit (debug overlay is on)
+        {Action::Up, 195, 240},    // walk into the flag
     };
 
     // An action is held if any of its windows covers this frame. Each action
@@ -342,7 +345,8 @@ void Game::applySmokeTestInput() {
         if (f >= w.from && f < w.to) held[static_cast<int>(w.action)] = true;
     for (int i = 0; i < kActionCount; ++i) input_.setInjected(static_cast<Action>(i), held[i]);
 
-    if (f == 100) debug_ = true; // exercise the debug overlay
+    if (f == 100) debug_ = true;  // exercise the debug overlay (also enables the warp)
+    if (f == 193) debug_ = false; // clean final frames for screenshots
 }
 
 bool Game::checkSmokeTest() {
@@ -361,15 +365,18 @@ bool Game::checkSmokeTest() {
 
     if (f == 19) smokeStartPos_ = info.playerPos;
     if (f == 80 && info.playerPos.x < smokeStartPos_.x + 80.0f) return fail("holding RIGHT did not move the player");
+    if (f == 80 && info.coins < 2) return fail("walking over the coin row did not collect coins");
+    if (f == 80 && info.coinsTotal < 10) return fail("level has suspiciously few coins");
     if (f >= 90 && f < 100) smokeMaxSpeed_ = std::max(smokeMaxSpeed_, info.playerVel.length());
     if (f == 100 && smokeMaxSpeed_ < 300.0f) return fail("B did not dash");
     if (f >= 110 && f < 140) smokeMaxZ_ = std::max(smokeMaxZ_, info.playerZ);
     if (f == 140 && smokeMaxZ_ < 10.0f) return fail("A did not hop");
     if (f == 140 && info.playerZ != 0.0f) return fail("player did not land after hopping");
-    if (f == 160 && !(info.playerVel.x < 0.0f && info.playerVel.y < 0.0f)) return fail("diagonal input ignored");
+    if (f == 160 && !(info.playerVel.x < 0.0f && info.playerVel.y > 0.0f)) return fail("diagonal input ignored");
     if (f == 172) smokeStartPos_ = info.playerPos;
     if (f == 183 && (info.playerPos.x != smokeStartPos_.x || info.playerPos.y != smokeStartPos_.y))
         return fail("player moved while paused");
+    if (f == 240 && !info.levelClear) return fail("walking into the exit did not clear the level");
     return true;
 }
 

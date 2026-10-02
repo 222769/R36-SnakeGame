@@ -42,15 +42,32 @@ Legend: `[x]` done · `[ ]` to do · `[~]` partly done / skeleton in place
 
 ---
 
-## Phase 2: Maps, collision, camera, coins, exit
+## ✅ Phase 2: Maps, collision, camera, coins, exit (complete)
 
-- [ ] Tile renderer: per-world tile atlas baked at load; draw only visible tiles
-- [ ] Tile collision for the player: separate X/Y axis resolution against the solid tiles in `Level`
-- [ ] Camera: follows the player with a dead-zone, clamps to the map edges, supports screen shake
-- [ ] Coins: entity list, bobbing animation, pickup radius, sparkle, counter in the HUD
-- [ ] Level exit tile and a "level complete" state (simple results panel)
-- [ ] Temporary built-in test map (until Phase 5 loads files)
-- [ ] Unit tests: collision corners, tunnelling at dash speed, camera clamping
+- [x] ASCII map format + parser (`Level::fromAscii`) with clear errors (row/column, missing spawn/exit).
+      Phase 5's file loader will reuse it.
+- [x] Tile types: ground, hedge wall, tree, rock, water, bridge, thorns (not harmful until Phase 3),
+      secret wall (looks solid, walk-through), exit
+- [x] TileSet: per-world procedural 16x16 art baked into one atlas (drawn at 2x). Covers grass
+      variants and flowers, hedge top/front faces, shore foam, bridge direction, animated water and
+      flag. Art choice per cell is precomputed; each frame draws only the visible tiles.
+- [x] Tile collision: axis-separated sliding, 4 px sub-steps (no tunnelling at dash speed),
+      map edges count as solid
+- [x] Corner nudge: the player slips around wall corners (≤7 px), so gaps and doorways feel forgiving
+- [x] Camera: dead-zone follow, velocity look-ahead, exponential easing, clamped to the map,
+      a top margin so the HUD never hides the first row, centring for small maps, decaying screen shake
+- [x] Coins: spinning and bobbing sprite, generous pickup radius, sparkle effect, sound hook, HUD counter
+- [x] Effects pool: fixed 48 slots, no allocations (coin sparkles, dash/landing dust)
+- [x] Exit flag, "LEVEL CLEAR!" results panel (coins, time to 0.1 s, all-coins bonus line),
+      victory hops, play again / back to title
+- [x] Level intro banner (placed on the screen half away from the hero), level clock in the HUD
+- [x] Built-in 40x24 test meadow (`BuiltinLevels.cpp`): 45 coins, lakes, bridge, secret coin room
+- [x] Debug: solid/exit tile outlines around the player, camera dead-zone, coin and camera readouts,
+      **R1 warps next to the exit** while the overlay is on
+- [x] Tests: map parsing and errors, flush stops, wall sliding, no tunnelling, corner nudge,
+      camera (clamp, dead-zone, margin, centring), coins, effects pool, built-in level
+      reachability (every coin and the exit can be reached from the spawn), and a smoke test that
+      walks into the flag
 
 ## Phase 3: Enemies, damage, health, checkpoints
 
@@ -113,7 +130,7 @@ Legend: `[x]` done · `[ ]` to do · `[~]` partly done / skeleton in place
 
 - [ ] Placeholder SFX synthesised at startup when no files exist (chiptune beeps)
 - [ ] Music: title, meadow, boss (and a crossfade between them)
-- [ ] Particle pool (fixed size, no allocations): dust on dash/land, coin sparkles, hit stars
+- [~] Particle pool: a basic fixed-size `Effects` pool exists (Phase 2). Extend with hit stars and leaf bursts.
 - [ ] Screen transitions (iris wipe), level title cards
 - [ ] Screen shake (respects the setting), hit-stop on damage
 - [ ] Optional TTF display font

@@ -6,6 +6,8 @@
 
 namespace pd {
 
+class Level;
+
 enum class Facing { Down, Up, Left, Right };
 
 Vec2 facingVector(Facing f);
@@ -49,11 +51,15 @@ class Player {
 public:
     static constexpr float kHitboxW = 18.0f;
     static constexpr float kHitboxH = 12.0f;
+    // How far the player slips sideways around wall corners (see moveAndCollide).
+    static constexpr float kCornerNudge = 7.0f;
 
     explicit Player(Vec2 spawn = {});
 
-    // Advances one fixed step. Returns a mask of PlayerEvent flags.
-    unsigned update(const PlayerInput& input, float dt);
+    // Advances one fixed step. With a level, movement collides with its
+    // solid tiles; without one the player moves freely (tests, menus).
+    // Returns a mask of PlayerEvent flags.
+    unsigned update(const PlayerInput& input, float dt, const Level* level = nullptr);
 
     // Applies knockback away from `source` and starts invincibility.
     // Returns false (no effect) while already invincible.

@@ -1,5 +1,9 @@
 // Pocket Dash unit tests. Dependency-free: no SDL window or audio needed.
 
+#include "BuiltinLevels.h"
+#include "Camera.h"
+#include "Collectibles.h"
+#include "Effects.h"
 #include "InputManager.h"
 #include "Level.h"
 #include "Player.h"
@@ -14,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <set>
 #include <functional>
 #include <string>
 #include <vector>
@@ -337,11 +342,211 @@ void testWorldsAndLevel() {
     CHECK(worldDef(WorldId::FrozenPeaks).rules.frictionScale < 1.0f);
 
     Level level(4, 3);
-    CHECK(level.tileAt(0, 0) == Tile::Empty);
+    CHECK(level.tileAt(0, 0) == Tile::Ground);
     level.setTile(1, 1, Tile::Wall);
     CHECK(Level::isSolid(level.tileAt(1, 1)));
     CHECK(level.tileAt(-1, 0) == Tile::Wall); // outside counts as wall
     CHECK(level.tileAt(4, 0) == Tile::Wall);
+}
+
+// --- Phase 2: levels, collision, camera, coins ---------------------------------
+
+Level parseOrDie(const std::vector<std::string>& rows) {
+    Level level;
+    std::string error;
+    const bool ok = Level::fromAscii(rows, level, &error);
+    if (!ok) std::printf("  map error: %s\n", error.c_str());
+    CHECK(ok);
+    return level;
+}
+
+void testAsciiParsing() {
+    const Level level = parseOrDie({
+        "#####",
+        "#Pc.#",
+        "#~=E#",
+        "#####",
+    });
+    CHECK(level.width() == 5 && level.height() == 4);
+    CHECK(level.tileAt(1, 1) == Tile::Ground); // spawn marker is ground
+    CHECK(level.tileAt(2, 1) == Tile::Ground); // coin marker is ground
+    CHECK(level.tileAt(1, 2) == Tile::Water);
+    CHECK(level.tileAt(2, 2) == Tile::Bridge);
+    CHECK(level.tileAt(3, 2) == Tile::Exit);
+    CHECK(level.coins.size() == 1);
+    CHECK_NEAR(level.spawn.x, 48.0f, 0.01f); // centre of tile 1
+    CHECK_NEAR(level.exit.x, 112.0f, 0.01f);
+
+    Level bad;
+    std::string error;
+    CHECK(!Level::fromAscii({"###", "#P", "###"}, bad, &error));        // ragged
+    CHECK(error.find("row 2") != std::string::npos);
+    CHECK(!Level::fromAscii({"#P#", "#?E"}, bad, &error));              // unknown char
+    CHECK(error.find("'?'") != std::string::npos);
+    CHECK(!Level::fromAscii({"#..", "#.E"}, bad, &error));              // no spawn
+    CHECK(!Level::fromAscii({"PP.", "#.E"}, bad, &error));              // two spawns
+    CHECK(!Level::fromAscii({"P..", "#.."}, bad, &error));              // no exit
+}
+
+void testCollisionStopsFlush() {
+    const Level level = parseOrDie({
+        "######",
+        "#P..##",
+        "#...E#",
+        "######",
+    });
+    // Box in tile column 2 moving right into the wall at column 4 (x = 128).
+    const RectF box{70.0f, 40.0f, 18.0f, 12.0f};
+    CollisionResult hit;
+    const Vec2 moved = moveAndCollide(level, box, {100.0f, 0.0f}, 0.0f, &hit);
+    CHECK(hit.hitX && !hit.hitY);
+    CHECK_NEAR(box.x + moved.x + box.w, 128.0f, 0.01f);
+
+    // Moving diagonally into the wall slides along it.
+    const Vec2 slid = moveAndCollide(level, box, {100.0f, 20.0f}, 0.0f, &hit);
+    CHECK(hit.hitX);
+    CHECK_NEAR(slid.y, 20.0f, 0.01f);
+
+    // Outside the map counts as solid.
+    const Vec2 up = moveAndCollide(level, RectF{40.0f, 40.0f, 18.0f, 12.0f}, {0.0f, -500.0f}, 0.0f, &hit);
+    CHECK(hit.hitY);
+    CHECK_NEAR(40.0f + up.y, 32.0f, 0.01f);
+}
+
+void testNoTunnelling() {
+    // A single wall tile between two open areas; dash at it many times.
+    const Level level = parseOrDie({
+        "#######",
+        "#P.#.E#",
+        "#######",
+    });
+    Player p(level.spawn);
+    for (int i = 0; i < 120; ++i) {
+        PlayerInput in;
+        in.move = {1.0f, 0.0f};
+        in.dashPressed = (i % 20) == 0;
+        p.update(in, kDt, &level);
+        CHECK(p.hitbox().right() <= 96.0f + 0.01f);
+    }
+    CHECK(p.velocity().x == 0.0f); // pinned against the wall
+    // Even a single absurd step cannot pass through.
+    const Vec2 moved = moveAndCollide(level, p.hitbox(), {1000.0f, 0.0f});
+    CHECK(moved.x <= 0.01f);
+}
+
+void testCornerNudge() {
+    const Level level = parseOrDie({
+        "#######",
+        "#P.#..#",
+        "#.....#",
+        "#..#.E#",
+        "#######",
+    });
+    // Feet 5px too low for the one-tile gap in column 3 (rows 64..96).
+    const RectF box{40.0f, 89.0f, 18.0f, 12.0f};
+    CollisionResult hit;
+    const Vec2 stuck = moveAndCollide(level, box, {80.0f, 0.0f}, 0.0f, &hit);
+    CHECK(hit.hitX);
+    CHECK(box.x + stuck.x + box.w <= 96.01f);
+
+    Player p({50.0f, 99.0f});
+    PlayerInput right;
+    right.move = {1.0f, 0.0f};
+    for (int i = 0; i < 60; ++i) p.update(right, kDt, &level);
+    CHECK(p.position().x > 140.0f); // slipped through the gap
+    CHECK(!level.overlapsSolid(p.hitbox()));
+}
+
+void testCamera() {
+    Camera cam(640.0f, 480.0f);
+    cam.setBounds(1280.0f, 768.0f);
+    cam.snapTo({10.0f, 10.0f});
+    CHECK(cam.rawPosition().x == 0.0f && cam.rawPosition().y == 0.0f); // clamped to the top-left
+    cam.snapTo({1270.0f, 760.0f});
+    CHECK_NEAR(cam.rawPosition().x, 640.0f, 0.01f);
+    CHECK_NEAR(cam.rawPosition().y, 288.0f, 0.01f);
+
+    // Small movements inside the dead-zone don't scroll.
+    cam.snapTo({640.0f, 384.0f});
+    const Vec2 before = cam.rawPosition();
+    for (int i = 0; i < 30; ++i) cam.follow({650.0f, 390.0f}, {}, kDt);
+    CHECK_NEAR(cam.rawPosition().x, before.x, 0.01f);
+    // Large movements do, and the camera converges.
+    for (int i = 0; i < 120; ++i) cam.follow({900.0f, 384.0f}, {}, kDt);
+    CHECK(cam.rawPosition().x > before.x + 200.0f);
+
+    // A top margin lets the view scroll above the world (room for the HUD).
+    Camera hud(640.0f, 480.0f);
+    hud.setBounds(1280.0f, 768.0f, 40.0f);
+    hud.snapTo({0.0f, 0.0f});
+    CHECK_NEAR(hud.rawPosition().y, -40.0f, 0.01f);
+
+    // A world smaller than the screen is centred.
+    Camera small(640.0f, 480.0f);
+    small.setBounds(320.0f, 240.0f);
+    small.snapTo({0.0f, 0.0f});
+    CHECK_NEAR(small.rawPosition().x, -160.0f, 0.01f);
+
+    // Disabled shake leaves the position untouched.
+    cam.setShakeEnabled(false);
+    cam.shake(10.0f, 1.0f);
+    CHECK(cam.position().x == std::round(cam.rawPosition().x));
+}
+
+void testBuiltinLevel() {
+    Level level;
+    std::string error;
+    const bool ok = makeTestLevel(level, &error);
+    if (!ok) std::printf("  level error: %s\n", error.c_str());
+    CHECK(ok);
+    CHECK(!level.id.empty() && !level.name.empty());
+
+    Player p(level.spawn);
+    CHECK(!level.overlapsSolid(p.hitbox())); // spawn is not inside a wall
+
+    // Every coin and the exit must be reachable from the spawn (tile flood fill).
+    const int sx = static_cast<int>(level.spawn.x) / 32;
+    const int sy = static_cast<int>(level.spawn.y) / 32;
+    std::set<std::pair<int, int>> seen{{sx, sy}};
+    std::vector<std::pair<int, int>> stack{{sx, sy}};
+    while (!stack.empty()) {
+        const auto [x, y] = stack.back();
+        stack.pop_back();
+        const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (const auto& d : dirs) {
+            const int nx = x + d[0];
+            const int ny = y + d[1];
+            if (level.inBounds(nx, ny) && !Level::isSolid(level.tileAt(nx, ny)) && seen.insert({nx, ny}).second)
+                stack.push_back({nx, ny});
+        }
+    }
+    int unreachable = 0;
+    for (const Vec2& c : level.coins)
+        if (!seen.count({static_cast<int>(c.x) / 32, static_cast<int>(c.y) / 32})) ++unreachable;
+    CHECK(unreachable == 0);
+    CHECK(seen.count({static_cast<int>(level.exit.x) / 32, static_cast<int>(level.exit.y) / 32}) == 1);
+}
+
+void testCoins() {
+    CoinField coins;
+    coins.reset({{100.0f, 100.0f}, {130.0f, 100.0f}, {400.0f, 400.0f}});
+    Effects fx;
+    CHECK(coins.total() == 3);
+    CHECK(coins.collect({100.0f, 105.0f}, &fx) == 1);
+    CHECK(coins.collect({100.0f, 105.0f}, &fx) == 0); // can't collect twice
+    CHECK(coins.collect({120.0f, 100.0f}, &fx) == 1);
+    CHECK(coins.collected() == 2);
+    CHECK(fx.activeCount() == 2);
+    coins.reset({{0.0f, 0.0f}});
+    CHECK(coins.collected() == 0 && coins.total() == 1);
+}
+
+void testEffectsPool() {
+    Effects fx;
+    for (int i = 0; i < 200; ++i) fx.spawn(Effects::Type::Dust, {0.0f, 0.0f}, SDL_Color{255, 255, 255, 255});
+    CHECK(fx.activeCount() == 48); // fixed pool, recycles the oldest
+    for (int i = 0; i < 60; ++i) fx.update(kDt);
+    CHECK(fx.activeCount() == 0);
 }
 
 } // namespace
@@ -363,6 +568,14 @@ int main(int, char*[]) {
         {"art and font data", testArtAndFontData},
         {"power-ups", testPowerUps},
         {"worlds and level", testWorldsAndLevel},
+        {"ascii map parsing", testAsciiParsing},
+        {"collision stops flush", testCollisionStopsFlush},
+        {"no tunnelling", testNoTunnelling},
+        {"corner nudge", testCornerNudge},
+        {"camera", testCamera},
+        {"built-in level", testBuiltinLevel},
+        {"coins", testCoins},
+        {"effects pool", testEffectsPool},
     };
     for (const auto& [name, fn] : tests) {
         const int before = g_failures;

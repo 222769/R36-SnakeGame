@@ -24,11 +24,16 @@ public:
     static constexpr int kHeartW = 9;
     static constexpr int kHeartH = 8;
 
+    // Coin sheet: 3 frames of 12x12 in a row (full, turning, edge-on).
+    static constexpr int kCoinSize = 12;
+    static constexpr int kCoinFrames = 3;
+
     bool create(SDL_Renderer* renderer, const std::string& spriteDir);
 
     SDL_Texture* player() const { return player_.get(); }
     SDL_Texture* heartFull() const { return heartFull_.get(); }
     SDL_Texture* heartEmpty() const { return heartEmpty_.get(); }
+    SDL_Texture* coin() const { return coin_.get(); }
 
     // Checks every built-in sprite for consistent row widths and known
     // palette characters (used by the unit tests).
@@ -38,6 +43,7 @@ private:
     TexturePtr player_;
     TexturePtr heartFull_;
     TexturePtr heartEmpty_;
+    TexturePtr coin_;
 };
 
 } // namespace pd

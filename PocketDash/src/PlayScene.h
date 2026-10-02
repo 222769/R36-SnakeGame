@@ -1,13 +1,17 @@
 #pragma once
 
+#include "Camera.h"
+#include "Collectibles.h"
+#include "Effects.h"
+#include "Level.h"
 #include "Player.h"
 #include "Scene.h"
-#include "SdlPtr.h"
+#include "TileSet.h"
 
 namespace pd {
 
-// Gameplay scene. In Phase 1 this is a single-screen sandbox meadow used to
-// tune movement; Phase 2 replaces the fixed arena with tile maps and a camera.
+// Gameplay scene: one level with its tile map, camera, coins and exit.
+// Phase 2 plays the built-in test meadow; Phase 5 loads World 1 from files.
 class PlayScene : public Scene {
 public:
     explicit PlayScene(Game& game);
@@ -19,23 +23,33 @@ public:
     void renderDebug(SDL_Renderer* r) const override;
 
 private:
-    void buildBackground(SDL_Renderer* r);
+    enum class State { Playing, Paused, Info, Clear };
+
+    void restart();
+    void updatePlaying(float dt);
     void updatePauseMenu();
+    void updateClear(float dt);
+    void debugWarpToExit();
     void renderHud(SDL_Renderer* r) const;
+    void renderBanner(SDL_Renderer* r) const;
     void renderPauseMenu(SDL_Renderer* r) const;
     void renderInfoPanel(SDL_Renderer* r) const;
-    void restart();
+    void renderClearPanel(SDL_Renderer* r) const;
 
+    Level level_;
+    TileSet tiles_;
+    Camera camera_;
+    CoinField coins_;
+    Effects effects_;
     Player player_;
-    RectF arena_;
-    TexturePtr background_;
 
-    bool paused_ = false;
+    State state_ = State::Playing;
     int pauseIndex_ = 0;
-    bool infoOpen_ = false;
     int hearts_ = 3;
     int maxHearts_ = 3;
-    float time_ = 0.0f;
+    float levelTime_ = 0.0f;  // gameplay clock (stops when paused / cleared)
+    float animTime_ = 0.0f;   // drives tile and coin animation
+    float stateTime_ = 0.0f;  // time spent in the current state
 };
 
 } // namespace pd

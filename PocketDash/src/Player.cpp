@@ -2,6 +2,7 @@
 
 #include "Constants.h"
 #include "Draw.h"
+#include "Level.h"
 #include "Sprites.h"
 
 #include <cmath>
@@ -37,7 +38,7 @@ void Player::updateFacing(Vec2 dir) {
         facing_ = dir.y < 0 ? Facing::Up : Facing::Down;
 }
 
-unsigned Player::update(const PlayerInput& input, float dt) {
+unsigned Player::update(const PlayerInput& input, float dt, const Level* level) {
     unsigned events = kEventNone;
 
     Vec2 move = input.move;
@@ -75,7 +76,20 @@ unsigned Player::update(const PlayerInput& input, float dt) {
         updateFacing(move);
     }
 
-    pos_ += vel_ * dt;
+    if (level) {
+        CollisionResult hit;
+        pos_ += moveAndCollide(*level, hitbox(), vel_ * dt, kCornerNudge, &hit);
+        if (hit.hitX) {
+            vel_.x = 0.0f;
+            dashDir_.x = 0.0f;
+        }
+        if (hit.hitY) {
+            vel_.y = 0.0f;
+            dashDir_.y = 0.0f;
+        }
+    } else {
+        pos_ += vel_ * dt;
+    }
 
     // --- Hop (height axis) -------------------------------------------------
     if (input.hopPressed && !isAirborne() && stunTimer_ <= 0.0f) {

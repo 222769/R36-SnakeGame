@@ -16,6 +16,11 @@ struct DebugInfo {
     Vec2 playerVel;
     float playerZ = 0.0f;
     int enemyCount = 0;
+    int coins = 0;
+    int coinsTotal = 0;
+    bool hasCamera = false;
+    Vec2 camera;
+    bool levelClear = false;
 };
 
 // A screen of the game (title, gameplay, menus...). The Game owns exactly

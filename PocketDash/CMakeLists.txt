@@ -46,7 +46,11 @@ endif()
 # ---------------------------------------------------------------------------
 set(POCKETDASH_CORE_SOURCES
     src/AudioManager.cpp
+    src/BuiltinLevels.cpp
+    src/Camera.cpp
+    src/Collectibles.cpp
     src/Draw.cpp
+    src/Effects.cpp
     src/Enemy.cpp
     src/Game.cpp
     src/InputManager.cpp
@@ -57,6 +61,7 @@ set(POCKETDASH_CORE_SOURCES
     src/PowerUp.cpp
     src/SaveManager.cpp
     src/Sprites.cpp
+    src/TileSet.cpp
     src/TitleScene.cpp
     src/UI.cpp
     src/World.cpp

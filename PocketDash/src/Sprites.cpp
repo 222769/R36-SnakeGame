@@ -24,7 +24,8 @@ bool paletteColor(char c, SDL_Color& out) {
     case 'E': out = {26, 26, 42, 255}; return true;    // eyes
     case 'P': out = {255, 143, 163, 255}; return true; // cheeks
     case 'H': out = {122, 74, 42, 255}; return true;   // hair
-    case 'Y': out = {255, 210, 63, 255}; return true;  // scarf
+    case 'Y': out = {255, 210, 63, 255}; return true;  // scarf / gold
+    case 'y': out = {214, 140, 30, 255}; return true;  // dark gold
     case 'B': out = {59, 125, 216, 255}; return true;  // tunic
     case 'G': out = {90, 190, 90, 255}; return true;   // backpack
     case 'N': out = {107, 62, 38, 255}; return true;   // boots
@@ -130,6 +131,51 @@ const Art kHeartEmpty = {
     "....K....",
 };
 
+// --- Coin (12x12, 3 spin frames; the 4th is frame 1 mirrored) ---------------
+
+const Art kCoin0 = {
+    "...KKKKKK...",
+    "..KYYYYYYK..",
+    ".KYYWWYYYyK.",
+    "KYYWYYYYYYyK",
+    "KYYWYYKYYYyK",
+    "KYYYYYKYYYyK",
+    "KYYYYYKYYYyK",
+    "KYYYYYKYYYyK",
+    "KYYYYYYYYyyK",
+    ".KyYYYYYyyK.",
+    "..KyyyyyyK..",
+    "...KKKKKK...",
+};
+const Art kCoin1 = {
+    "....KKKK....",
+    "...KYYYYK...",
+    "..KYWYYYyK..",
+    "..KYWYYYyK..",
+    "..KYYYKYyK..",
+    "..KYYYKYyK..",
+    "..KYYYKYyK..",
+    "..KYYYKYyK..",
+    "..KYYYYyyK..",
+    "..KyYYYyyK..",
+    "...KyyyyK...",
+    "....KKKK....",
+};
+const Art kCoin2 = {
+    ".....KK.....",
+    "....KYyK....",
+    "....KWyK....",
+    "....KWyK....",
+    "....KYyK....",
+    "....KYyK....",
+    "....KYyK....",
+    "....KYyK....",
+    "....KYyK....",
+    "....KYyK....",
+    "....KYyK....",
+    ".....KK.....",
+};
+
 struct NamedArt {
     const char* name;
     const Art* art;
@@ -146,6 +192,9 @@ const NamedArt kAllArt[] = {
     {"feet_side_step", &kFeetSideStep, Sprites::kPlayerFrameW},
     {"heart_full", &kHeartFull, Sprites::kHeartW},
     {"heart_empty", &kHeartEmpty, Sprites::kHeartW},
+    {"coin0", &kCoin0, Sprites::kCoinSize},
+    {"coin1", &kCoin1, Sprites::kCoinSize},
+    {"coin2", &kCoin2, Sprites::kCoinSize},
 };
 
 void blitArt(SDL_Surface* surface, const Art& art, int ox, int oy) {
@@ -262,7 +311,16 @@ bool Sprites::create(SDL_Renderer* renderer, const std::string& spriteDir) {
     heartEmpty_ = loadOverride(renderer, spriteDir, "heart_empty", kHeartW, kHeartH);
     if (!heartEmpty_) heartEmpty_ = artTexture(renderer, kHeartEmpty, kHeartW);
 
-    const bool ok = player_ && heartFull_ && heartEmpty_;
+    coin_ = loadOverride(renderer, spriteDir, "coin", kCoinSize * kCoinFrames, kCoinSize);
+    if (!coin_) {
+        SurfacePtr sheet = makeSurface(kCoinSize * kCoinFrames, kCoinSize);
+        if (!sheet) return false;
+        const Art* frames[kCoinFrames] = {&kCoin0, &kCoin1, &kCoin2};
+        for (int i = 0; i < kCoinFrames; ++i) blitArt(sheet.get(), *frames[i], i * kCoinSize, 0);
+        coin_ = toTexture(renderer, sheet.get());
+    }
+
+    const bool ok = player_ && heartFull_ && heartEmpty_ && coin_;
     if (!ok) SDL_Log("[sprites] Failed to create sprites: %s", SDL_GetError());
     return ok;
 }
