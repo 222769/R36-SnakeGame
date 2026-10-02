@@ -6,13 +6,39 @@ native ARM Linux executable, and it also runs on a normal PC for development.
 
 > **Pick up and play in seconds.**
 
-**Status:** Phases 1–2 of 8 are complete: the engine, input and movement,
-plus tile maps, collision, a scrolling camera, coins and a level exit. See
+**Status:** Phases 1–3 of 8 are complete: the engine, input and movement;
+tile maps, collision, a scrolling camera, coins and a level exit; and
+enemies, hearts, hazards, checkpoints and the three difficulties. See
 [TODO.md](TODO.md) for the roadmap.
 
 ![Title screen](docs/title.png)
 ![Gameplay](docs/gameplay.png)
+![Enemies](docs/enemies.png)
 ![Level clear](docs/level_clear.png)
+
+## How to play
+
+* **Reach the flag.** Coins are optional but count for your score.
+* **Hop (A)** over thorns and small streams, and onto enemies to stomp them.
+* **Dash (B)** to zip past danger, through enemies, and even across a
+  one-tile stream.
+* Touching an enemy, thorns or falling in water costs a heart. Heart
+  pickups restore them, and checkpoint flags heal you and become your
+  restart point.
+* **No game over.** Run out of hearts and you go back to the last
+  checkpoint with full health, keeping your coins.
+
+| Enemy    | What it does                                                    |
+|----------|-----------------------------------------------------------------|
+| Slime    | Squishes down, then hops towards you                             |
+| Beetle   | Walks back and forth, pausing to turn                            |
+| Mushroom | Shivers, does a big bounce and sends a shockwave ring: hop it!   |
+
+**Difficulty:** *Relaxed* gives 5 hearts, slower enemies and extra checkpoints.
+*Normal* is the default. *Challenge* has faster enemies, fewer checkpoints and
+a higher score multiplier. Every level and secret is available on all three.
+Set it with `--difficulty relaxed|normal|challenge` (the settings menu comes
+in Phase 6).
 
 ---
 
@@ -30,6 +56,7 @@ plus tile maps, collision, a scrolling camera, coins and a level exit. See
 | Select + Start (hold) | window close | Quit                            |
 | Select + L1   | F1                  | Toggle debug overlay            |
 | R1 *(debug on)* | W *(debug on)*    | Warp next to the level exit     |
+| L1 *(debug on)* | Q *(debug on)*    | Warp to the next enemy          |
 | –             | F11                 | Toggle fullscreen               |
 
 The spec's keyboard layout puts the X/Y buttons on the **A** and **S** keys,
@@ -192,7 +219,11 @@ PocketDash/
 │   ├── Player.*            movement, dash, hop, knockback, rendering
 │   ├── Scene.h             scene interface
 │   ├── TitleScene.*        title screen (main menu in Phase 6)
-│   ├── PlayScene.*         gameplay: level, camera, coins, exit, pause, results
+│   ├── PlayScene.*         gameplay presentation: camera, sound, HUD, pause, results
+│   ├── LevelSession.*      gameplay simulation (no SDL): rules, damage, checkpoints
+│   ├── Enemy.*             slime / beetle / mushroom behaviours and drawing
+│   ├── EntityTypes.h       enemy and checkpoint spawn data
+│   ├── Difficulty.h        per-difficulty rules
 │   ├── Level.*             tile map, ASCII map parser, tile collision (moveAndCollide)
 │   ├── BuiltinLevels.*     levels compiled into the game (test meadow)
 │   ├── TileSet.*           per-world procedural tile atlas + visible-tile renderer
@@ -205,7 +236,6 @@ PocketDash/
 │   ├── UI.*                built-in bitmap font, panels
 │   ├── Draw.*              shape helpers
 │   ├── World.*             the 7 world definitions (themes, rules)
-│   ├── Enemy.*             enemy model (behaviours in Phase 3)
 │   ├── PowerUp.*           power-up types and timers
 │   └── Math.h, Constants.h, Settings.h, SdlPtr.h
 ├── tests/test_main.cpp
@@ -228,8 +258,12 @@ PocketDash/
   text uses a single font atlas, effects live in a fixed pool, and debug
   strings use stack buffers. Only visible tiles are drawn.
 * **Levels are ASCII maps** (`#` hedge, `T` tree, `~` water, `=` bridge,
-  `c` coin, `P` spawn, `E` exit, … — see `src/Level.h`). Phase 5 loads them
+  `^` thorns, `c` coin, `h` heart, `s`/`b`/`B`/`m` enemies, `C`/`k`/`r`
+  checkpoints, `P` spawn, `E` exit — see `src/Level.h`). Phase 5 loads them
   from `assets/levels/`.
+* **Gameplay is a pure simulation.** `LevelSession` has no SDL rendering or
+  input code. The unit tests play through small ASCII maps (stomping, water
+  rescues, knock-outs, checkpoints) without opening a window.
 * **Input presses are latched** until a simulation step consumes them, so a
   tap shorter than a frame is never lost and never seen twice.
 * **RAII everywhere.** SDL handles live in `std::unique_ptr` with custom

@@ -4,7 +4,9 @@
 #include "Camera.h"
 #include "Collectibles.h"
 #include "Effects.h"
+#include "Enemy.h"
 #include "InputManager.h"
+#include "LevelSession.h"
 #include "Level.h"
 #include "Player.h"
 #include "PowerUp.h"
@@ -516,7 +518,8 @@ void testBuiltinLevel() {
         for (const auto& d : dirs) {
             const int nx = x + d[0];
             const int ny = y + d[1];
-            if (level.inBounds(nx, ny) && !Level::isSolid(level.tileAt(nx, ny)) && seen.insert({nx, ny}).second)
+            if (level.inBounds(nx, ny) && !Level::isSolid(level.tileAt(nx, ny)) &&
+                !Level::isDanger(level.tileAt(nx, ny)) && seen.insert({nx, ny}).second)
                 stack.push_back({nx, ny});
         }
     }
@@ -549,6 +552,284 @@ void testEffectsPool() {
     CHECK(fx.activeCount() == 0);
 }
 
+// --- Phase 3: enemies, damage, hazards, checkpoints, difficulty ---------------
+
+// Runs a session for `steps` steps with the given held input; `hopAt`/`dashAt`
+// press A/B on one step. Returns all events OR-ed together.
+unsigned run(LevelSession& s, Vec2 move, int steps, int hopAt = -1, int dashAt = -1) {
+    unsigned all = 0;
+    for (int i = 0; i < steps; ++i) {
+        PlayerInput in;
+        in.move = move;
+        in.hopPressed = i == hopAt;
+        in.dashPressed = i == dashAt;
+        all |= s.update(in, kDt);
+    }
+    return all;
+}
+
+// Holds RIGHT until the player's feet reach `x`; returns steps taken.
+int walkRightTo(LevelSession& s, float x) {
+    int steps = 0;
+    while (s.player().position().x < x && steps < 600) {
+        PlayerInput in;
+        in.move = {1.0f, 0.0f};
+        s.update(in, kDt);
+        ++steps;
+    }
+    return steps;
+}
+
+void testThornsHurtAndKnockBack() {
+    const Level level = parseOrDie({
+        "#########",
+        "#P..^..E#",
+        "#########",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    const unsigned ev = run(s, {1.0f, 0.0f}, 40);
+    CHECK(ev & kSessionHurt);
+    CHECK(s.hearts() == 2);
+    CHECK(s.player().isInvincible());
+    CHECK(s.player().position().x < 128.0f); // pushed back out of the thorns
+    CHECK(s.stats().heartsLost == 1);
+}
+
+void testHopOverThorns() {
+    const Level level = parseOrDie({
+        "#########",
+        "#P..^..E#",
+        "#########",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    walkRightTo(s, 116.0f); // thorns span x 128..160
+    run(s, {1.0f, 0.0f}, 40, 0);
+    CHECK(s.hearts() == 3);
+    CHECK(s.player().position().x > 170.0f);
+}
+
+void testWaterFallAndDashSkim() {
+    const Level level = parseOrDie({
+        "#########",
+        "#P..~..E#",
+        "#########",
+    });
+    // Walking in: splash, lose a heart, rescued to the bank.
+    LevelSession s(level, Difficulty::Normal);
+    const unsigned ev = run(s, {1.0f, 0.0f}, 60);
+    CHECK(ev & kSessionSplash);
+    CHECK(s.hearts() == 2);
+    CHECK(s.player().position().x < 128.0f);
+    CHECK(s.stats().splashes >= 1);
+
+    // Dashing across a one-tile stream skims over it.
+    LevelSession d(level, Difficulty::Normal);
+    walkRightTo(d, 112.0f);
+    const unsigned dev = run(d, {1.0f, 0.0f}, 30, -1, 0);
+    CHECK((dev & kSessionSplash) == 0);
+    CHECK(d.hearts() == 3);
+    CHECK(d.player().position().x > 160.0f);
+}
+
+void testStompAndDashDefeatEnemies() {
+    const Level level = parseOrDie({
+        "##########",
+        "#P...m..E#",
+        "##########",
+    });
+    // Touching the mushroom on foot hurts.
+    LevelSession walk(level, Difficulty::Normal);
+    const unsigned wev = run(walk, {1.0f, 0.0f}, 50);
+    CHECK(wev & kSessionHurt);
+    CHECK(walk.enemiesAlive() == 1);
+
+    // Hopping onto it defeats it and bounces the hero.
+    LevelSession hop(level, Difficulty::Normal);
+    walkRightTo(hop, 128.0f); // mushroom centre x = 176
+    const unsigned hev = run(hop, {1.0f, 0.0f}, 25, 0);
+    CHECK(hev & kSessionStomp);
+    CHECK(hop.enemiesAlive() == 0);
+    CHECK(hop.hearts() == 3);
+    CHECK(hop.stats().enemiesDefeated == 1);
+
+    // Dashing into it also defeats it, without damage.
+    LevelSession dash(level, Difficulty::Normal);
+    walkRightTo(dash, 120.0f);
+    const unsigned dev = run(dash, {1.0f, 0.0f}, 20, -1, 0);
+    CHECK(dev & kSessionStomp);
+    CHECK((dev & kSessionHurt) == 0);
+    CHECK(dash.enemiesAlive() == 0);
+}
+
+void testKnockOutReturnsToCheckpoint() {
+    const Level level = parseOrDie({
+        "############",
+        "#P.C..~~~.E#",
+        "############",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    unsigned ev = 0;
+    int steps = 0;
+    // Keep walking into the water: each fall (outside invincibility) costs a heart.
+    while (!(ev & kSessionKnockedOut) && steps < 60 * 15) {
+        PlayerInput in;
+        in.move = {1.0f, 0.0f};
+        ev |= s.update(in, kDt);
+        ++steps;
+    }
+    CHECK(ev & kSessionCheckpoint);
+    CHECK(ev & kSessionKnockedOut);
+    CHECK(s.state() == LevelSession::State::KnockedOut);
+    CHECK(s.activeCheckpoint() == 0);
+
+    // No game over: after the "oops" pause we are back at the checkpoint, healed.
+    const unsigned rev = run(s, {}, static_cast<int>(LevelSession::kKnockOutTime * 60.0f) + 2);
+    CHECK(rev & kSessionRespawned);
+    CHECK(s.state() == LevelSession::State::Playing);
+    CHECK(s.hearts() == s.maxHearts());
+    CHECK_NEAR(s.player().position().x, s.checkpoints()[0].pos.x, 0.01f);
+    CHECK(s.player().isInvincible());
+}
+
+void testHeartPickup() {
+    const Level level = parseOrDie({
+        "#########",
+        "#P^.h..E#",
+        "#########",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    // Step on the thorns first (lose a heart), then walk on through the
+    // pickup while still invincible.
+    run(s, {1.0f, 0.0f}, 70);
+    CHECK(s.stats().heartsLost == 1);
+    CHECK(s.hearts() == 3); // healed back by the pickup
+    CHECK(s.heartPickups().remaining() == 0);
+
+    // At full health the heart is left for later.
+    const Level spare = parseOrDie({
+        "#######",
+        "#P.h.E#",
+        "#######",
+    });
+    LevelSession f(spare, Difficulty::Normal);
+    run(f, {1.0f, 0.0f}, 30);
+    CHECK(f.heartPickups().remaining() == 1);
+}
+
+void testDifficultyRules() {
+    const Level level = parseOrDie({
+        "#########",
+        "#PCkr..E#",
+        "#########",
+    });
+    LevelSession relaxed(level, Difficulty::Relaxed);
+    LevelSession normal(level, Difficulty::Normal);
+    LevelSession challenge(level, Difficulty::Challenge);
+    CHECK(relaxed.maxHearts() == 5 && relaxed.hearts() == 5);
+    CHECK(normal.maxHearts() == 3);
+    CHECK(challenge.maxHearts() == 3);
+    CHECK(relaxed.checkpoints().size() == 3);
+    CHECK(normal.checkpoints().size() == 2);
+    CHECK(challenge.checkpoints().size() == 1);
+    CHECK(relaxed.rules().enemySpeed < 1.0f && challenge.rules().enemySpeed > 1.0f);
+    CHECK(challenge.rules().scoreMultiplier > normal.rules().scoreMultiplier);
+    CHECK(difficultyFromName("relaxed") == Difficulty::Relaxed);
+    CHECK(difficultyFromName("Challenge") == Difficulty::Challenge);
+    CHECK(difficultyFromName("???") == Difficulty::Normal);
+}
+
+void testSlimeTelegraphsThenChases() {
+    const Level level = parseOrDie({
+        "############",
+        "#P.........#",
+        "#..........#",
+        "#.......s.E#",
+        "############",
+    });
+    EnemySpawn spawn = level.enemies.at(0);
+    Enemy slime(spawn);
+    const Vec2 target{60.0f, 60.0f};
+    const Vec2 start = slime.position();
+    float firstMove = -1.0f;
+    for (int i = 0; i < 180; ++i) {
+        slime.update(kDt, level, target);
+        if (firstMove < 0.0f && (slime.position() - start).lengthSq() > 0.01f) firstMove = i * kDt;
+    }
+    CHECK(firstMove >= 0.3f); // it rests and squishes before the first hop
+    CHECK((slime.position() - target).length() < (start - target).length() - 20.0f);
+}
+
+void testEnemiesAvoidDanger() {
+    const Level level = parseOrDie({
+        "###########",
+        "#P.~~~^^^.#",
+        "#.b.....B.#",
+        "#.~s.^...m#",
+        "#..~~..^.E#",
+        "###########",
+    });
+    std::vector<Enemy> enemies;
+    for (const EnemySpawn& sp : level.enemies) enemies.emplace_back(sp);
+    CHECK(enemies.size() == 4);
+    bool touched = false;
+    for (int i = 0; i < 60 * 20; ++i) {
+        for (Enemy& e : enemies) {
+            e.update(kDt, level, {300.0f, 300.0f});
+            const RectF box = e.hitbox();
+            if (level.overlapsSolid(box) || level.overlapsTile(box, Tile::Water) ||
+                level.overlapsTile(box, Tile::Hazard) || level.overlapsTile(box, Tile::Exit))
+                touched = true;
+        }
+    }
+    CHECK(!touched);
+}
+
+void testMushroomShockwave() {
+    EnemySpawn spawn;
+    spawn.type = EnemyType::Mushroom;
+    spawn.pos = {200.0f, 200.0f};
+    Enemy m(spawn);
+    const Level open = parseOrDie({"P.E"});
+    bool sawRing = false;
+    bool hitAtRadius = false;
+    for (int i = 0; i < 60 * 5 && !hitAtRadius; ++i) {
+        m.update(kDt, open, {});
+        if (m.ringActive()) {
+            sawRing = true;
+            const float rr = m.ringRadius();
+            hitAtRadius = m.ringHits({200.0f + rr, 200.0f});
+            CHECK(!m.ringHits({200.0f, 200.0f}) || rr < Enemy::kRingThickness);
+        }
+    }
+    CHECK(sawRing);
+    CHECK(hitAtRadius);
+    m.defeat();
+    CHECK(!m.alive() && !m.ringActive());
+}
+
+void testDebugWarp() {
+    const Level level = parseOrDie({
+        "##########",
+        "#P.......#",
+        "#........#",
+        "#....m...#",
+        "#...#E#..#",
+        "#........#",
+        "##########",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    // Warping to a free tile lands exactly there, not next to it.
+    CHECK(s.warpNear(Level::tileCenter(5, 1)));
+    CHECK(static_cast<int>(s.player().position().x) / 32 == 5);
+    CHECK(static_cast<int>(s.player().position().y) / 32 == 1);
+    CHECK(!s.player().isInvincible()); // debug warps don't blink the hero
+    // Warping to the exit picks a free tile nearby (never the exit itself).
+    CHECK(s.warpNear(level.exit));
+    CHECK(!level.overlapsTile(s.player().hitbox(), Tile::Exit));
+    CHECK(!level.overlapsSolid(s.player().hitbox()));
+    CHECK(s.state() == LevelSession::State::Playing);
+}
+
 } // namespace
 
 int main(int, char*[]) {
@@ -576,6 +857,17 @@ int main(int, char*[]) {
         {"built-in level", testBuiltinLevel},
         {"coins", testCoins},
         {"effects pool", testEffectsPool},
+        {"thorns hurt", testThornsHurtAndKnockBack},
+        {"hop over thorns", testHopOverThorns},
+        {"water fall and dash skim", testWaterFallAndDashSkim},
+        {"stomp and dash", testStompAndDashDefeatEnemies},
+        {"knock-out to checkpoint", testKnockOutReturnsToCheckpoint},
+        {"heart pickup", testHeartPickup},
+        {"difficulty rules", testDifficultyRules},
+        {"slime telegraph", testSlimeTelegraphsThenChases},
+        {"enemies avoid danger", testEnemiesAvoidDanger},
+        {"mushroom shockwave", testMushroomShockwave},
+        {"debug warp", testDebugWarp},
     };
     for (const auto& [name, fn] : tests) {
         const int before = g_failures;

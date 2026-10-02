@@ -36,4 +36,24 @@ private:
     int collected_ = 0;
 };
 
+// Heart pickups: restore one heart. They stay put while the player is at
+// full health so they are still there when needed.
+class HeartPickups {
+public:
+    static constexpr float kPickupRadius = 18.0f;
+
+    void reset(const std::vector<Vec2>& positions);
+    // Returns true if a heart was picked up (only when `canHeal`).
+    bool collect(Vec2 playerCenter, bool canHeal, Effects* effects);
+    void render(SDL_Renderer* r, SDL_Texture* heart, Vec2 camera, float time) const;
+    int remaining() const;
+
+private:
+    struct Pickup {
+        Vec2 pos;
+        bool taken = false;
+    };
+    std::vector<Pickup> pickups_;
+};
+
 } // namespace pd

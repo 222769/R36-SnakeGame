@@ -19,7 +19,10 @@ int toTile(float px) { return static_cast<int>(std::floor(px / kTile)); }
 
 bool charToTile(char c, Tile& out) {
     switch (c) {
-    case '.': case 'P': case 'c': out = Tile::Ground; return true;
+    case '.': case 'P': case 'c': case 'h': case 's': case 'b': case 'B': case 'm':
+    case 'C': case 'k': case 'r':
+        out = Tile::Ground;
+        return true;
     case '#': out = Tile::Wall; return true;
     case 'T': out = Tile::Tree; return true;
     case 'o': out = Tile::Rock; return true;
@@ -136,6 +139,19 @@ bool Level::fromAscii(const std::vector<std::string>& rows, Level& out, std::str
                 ++exits;
             } else if (c == 'c') {
                 level.coins.push_back(tileCenter(x, y));
+            } else if (c == 'h') {
+                level.hearts.push_back(tileCenter(x, y));
+            } else if (c == 's' || c == 'b' || c == 'B' || c == 'm') {
+                EnemySpawn e;
+                e.type = c == 's' ? EnemyType::Slime : c == 'm' ? EnemyType::Mushroom : EnemyType::Beetle;
+                e.pos = tileCenter(x, y) + Vec2{0.0f, 6.0f}; // feet, like the player
+                e.dir = c == 'B' ? Vec2{0.0f, 1.0f} : Vec2{1.0f, 0.0f};
+                level.enemies.push_back(e);
+            } else if (c == 'C' || c == 'k' || c == 'r') {
+                CheckpointSpawn cp;
+                cp.pos = tileCenter(x, y) + Vec2{0.0f, 6.0f};
+                cp.hardest = c == 'C' ? Difficulty::Challenge : c == 'k' ? Difficulty::Normal : Difficulty::Relaxed;
+                level.checkpoints.push_back(cp);
             }
         }
     }

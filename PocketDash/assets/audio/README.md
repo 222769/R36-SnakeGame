@@ -18,6 +18,9 @@ Sound effects (`.wav` or `.ogg`):
 | menu_move          | the menu cursor moves          |
 | menu_select        | a menu item is chosen          |
 | pause              | the game is paused / resumed   |
+| heart              | a heart pickup is collected    |
+| checkpoint         | a checkpoint flag is touched   |
+| splash             | the player falls in water      |
 
 Music (`.ogg`, `.mp3` or `.wav`, looped): `title`, `meadow`, `boss`.
 

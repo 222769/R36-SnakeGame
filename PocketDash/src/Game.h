@@ -21,6 +21,7 @@ struct GameOptions {
     bool softwareRenderer = false;
     bool smokeTest = false;     // scripted headless run with assertions
     bool skipTitle = false;     // start straight in gameplay
+    std::string difficulty;     // overrides (and saves) the difficulty setting
     int maxFrames = 0;          // quit after N frames (0 = run forever)
     std::string screenshotPath; // save the final frame as PNG
 };

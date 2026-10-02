@@ -65,6 +65,15 @@ public:
     // Returns false (no effect) while already invincible.
     bool takeHit(Vec2 source);
 
+    // Springs back up after stomping an enemy.
+    void bounce();
+
+    // Puts the player at `pos` (water fall, checkpoint), standing still.
+    // With `freshInvincibility` the full invincibility time restarts so they
+    // are never hurt again straight away; otherwise any running timer just
+    // continues (so repeated falls can't chain invincibility forever).
+    void respawnAt(Vec2 pos, bool freshInvincibility = true);
+
     // Keeps the hitbox inside `area`, cancelling velocity into the walls.
     void constrainTo(const RectF& area);
 
@@ -79,6 +88,8 @@ public:
     RectF hitbox() const;
 
     bool isAirborne() const { return z_ > 0.0f || vz_ > 0.0f; }
+    // Coming down from a hop: the moment a stomp counts.
+    bool isFalling() const { return z_ > 0.0f && vz_ < 0.0f; }
     bool isDashing() const { return dashTimer_ > 0.0f; }
     bool isStunned() const { return stunTimer_ > 0.0f; }
     bool isInvincible() const { return invincibleTimer_ > 0.0f; }

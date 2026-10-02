@@ -18,6 +18,8 @@ struct DebugInfo {
     int enemyCount = 0;
     int coins = 0;
     int coinsTotal = 0;
+    int hearts = 0;
+    int maxHearts = 0;
     bool hasCamera = false;
     Vec2 camera;
     bool levelClear = false;

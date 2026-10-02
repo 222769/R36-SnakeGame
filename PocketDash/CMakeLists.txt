@@ -55,6 +55,7 @@ set(POCKETDASH_CORE_SOURCES
     src/Game.cpp
     src/InputManager.cpp
     src/Level.cpp
+    src/LevelSession.cpp
     src/Platform.cpp
     src/Player.cpp
     src/PlayScene.cpp

@@ -28,12 +28,19 @@ public:
     static constexpr int kCoinSize = 12;
     static constexpr int kCoinFrames = 3;
 
+    // Enemy sheet: 16x16 frames, 2 columns (animation) x 3 rows (type).
+    static constexpr int kEnemyFrame = 16;
+    enum EnemyRow { kRowSlime = 0, kRowBeetle = 1, kRowMushroom = 2, kEnemyRows = 3 };
+    // Checkpoint sheet: 2 frames of 16x16 (not reached, active).
+
     bool create(SDL_Renderer* renderer, const std::string& spriteDir);
 
     SDL_Texture* player() const { return player_.get(); }
     SDL_Texture* heartFull() const { return heartFull_.get(); }
     SDL_Texture* heartEmpty() const { return heartEmpty_.get(); }
     SDL_Texture* coin() const { return coin_.get(); }
+    SDL_Texture* enemies() const { return enemies_.get(); }
+    SDL_Texture* checkpoint() const { return checkpoint_.get(); }
 
     // Checks every built-in sprite for consistent row widths and known
     // palette characters (used by the unit tests).
@@ -44,6 +51,8 @@ private:
     TexturePtr heartFull_;
     TexturePtr heartEmpty_;
     TexturePtr coin_;
+    TexturePtr enemies_;
+    TexturePtr checkpoint_;
 };
 
 } // namespace pd

@@ -61,6 +61,8 @@ Game::Game(const GameOptions& options) : options_(options) {
     save_ = std::make_unique<SaveManager>(platform::saveDir());
     SDL_Log("[game] Save directory: %s", save_->saveDir().c_str());
     settings_ = save_->loadSettings();
+    if (!options_.difficulty.empty()) settings_.difficulty = difficultyFromName(options_.difficulty);
+    SDL_Log("[game] Difficulty: %s", difficultyName(settings_.difficulty));
 
     if (audio_.init(platform::dataPath("assets/audio/"))) {
         audio_.setMusicVolume(settings_.musicVolume);
@@ -276,7 +278,8 @@ void Game::renderDebugOverlay() {
         std::snprintf(lines[n++], 96, "PLAYER %.1f,%.1f Z %.1f", info.playerPos.x, info.playerPos.y, info.playerZ);
         std::snprintf(lines[n++], 96, "VEL %.0f,%.0f", info.playerVel.x, info.playerVel.y);
     }
-    std::snprintf(lines[n++], 96, "ENEMIES %d  COINS %d/%d", info.enemyCount, info.coins, info.coinsTotal);
+    std::snprintf(lines[n++], 96, "ENEMIES %d  COINS %d/%d  HP %d/%d", info.enemyCount, info.coins, info.coinsTotal,
+                  info.hearts, info.maxHearts);
     if (info.hasCamera) std::snprintf(lines[n++], 96, "CAMERA %.0f,%.0f", info.camera.x, info.camera.y);
     std::snprintf(lines[n++], 96, "PAD %.40s", input_.controllerName().c_str());
     char held[48];
@@ -377,6 +380,10 @@ bool Game::checkSmokeTest() {
     if (f == 183 && (info.playerPos.x != smokeStartPos_.x || info.playerPos.y != smokeStartPos_.y))
         return fail("player moved while paused");
     if (f == 240 && !info.levelClear) return fail("walking into the exit did not clear the level");
+    // The scripted route avoids every hazard and enemy: any lost heart means
+    // the level layout (or enemy AI) changed in a way that ambushes the start.
+    if ((f == 160 || f == 240) && info.hearts != info.maxHearts) return fail("took unexpected damage on a safe route");
+    if (f == 30 && info.enemyCount == 0) return fail("level has no enemies");
     return true;
 }
 

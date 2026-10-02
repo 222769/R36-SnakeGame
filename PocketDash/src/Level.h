@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EntityTypes.h"
 #include "Math.h"
 #include "World.h"
 
@@ -16,17 +17,25 @@ enum class Tile : uint8_t {
     Wall,       // hedge block (solid)
     Tree,       // solid decoration
     Rock,       // solid decoration
-    Water,      // blocks walking (Phase 3: hazard with respawn)
+    Water,      // walkable but you fall in: costs a heart, back to the last safe spot
+                // (hop over a narrow stream, or skim across while dashing)
     Bridge,     // walkable planks over water
-    Hazard,     // thorns: damages on touch (Phase 3)
+    Hazard,     // thorns: hurt on touch unless hopping over them
     SecretWall, // looks like a hedge, but can be walked through
     Exit,       // touching it completes the level
 };
 
-// One ASCII map character per tile (also used by the Phase 5 level files):
+// One ASCII map character per tile (also used by the Phase 5 level files).
+// Tiles:
 //   .  ground      #  hedge wall   T  tree     o  rock
 //   ~  water       =  bridge       ^  thorns   %  secret wall
-//   E  exit        P  player spawn (ground)    c  coin (ground)
+//   E  exit
+// Entities (placed on ground):
+//   P  player spawn    c  coin          h  heart pickup
+//   s  slime           b  beetle (patrols left/right)
+//   m  mushroom        B  beetle (patrols up/down)
+//   C  checkpoint (all difficulties)
+//   k  checkpoint (Relaxed + Normal)    r  checkpoint (Relaxed only)
 char tileToChar(Tile t);
 
 // Result of a collision move (see moveAndCollide).
@@ -57,7 +66,9 @@ public:
     Tile tileAtPixel(float px, float py) const;
     void setTile(int tx, int ty, Tile t);
 
-    static bool isSolid(Tile t) { return t == Tile::Wall || t == Tile::Tree || t == Tile::Rock || t == Tile::Water; }
+    static bool isSolid(Tile t) { return t == Tile::Wall || t == Tile::Tree || t == Tile::Rock; }
+    // Tiles that are walkable but dangerous (enemies avoid them too).
+    static bool isDanger(Tile t) { return t == Tile::Water || t == Tile::Hazard; }
     // True if any tile overlapped by `box` is solid.
     bool overlapsSolid(const RectF& box) const;
     // True if any tile overlapped by `box` is of type `t`.
@@ -72,6 +83,9 @@ public:
     Vec2 spawn;
     Vec2 exit;
     std::vector<Vec2> coins;
+    std::vector<Vec2> hearts;
+    std::vector<EnemySpawn> enemies;
+    std::vector<CheckpointSpawn> checkpoints;
 
 private:
     int width_ = 0;

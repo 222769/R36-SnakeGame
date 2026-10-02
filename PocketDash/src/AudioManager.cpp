@@ -30,6 +30,9 @@ const char* AudioManager::sfxName(Sfx sfx) {
     case Sfx::MenuMove: return "menu_move";
     case Sfx::MenuSelect: return "menu_select";
     case Sfx::Pause: return "pause";
+    case Sfx::Heart: return "heart";
+    case Sfx::Checkpoint: return "checkpoint";
+    case Sfx::Splash: return "splash";
     case Sfx::Count: break;
     }
     return "unknown";

@@ -58,4 +58,46 @@ void CoinField::render(SDL_Renderer* r, SDL_Texture* sheet, Vec2 camera, float t
     }
 }
 
+void HeartPickups::reset(const std::vector<Vec2>& positions) {
+    pickups_.clear();
+    pickups_.reserve(positions.size());
+    for (Vec2 p : positions) pickups_.push_back({p, false});
+}
+
+bool HeartPickups::collect(Vec2 playerCenter, bool canHeal, Effects* effects) {
+    if (!canHeal) return false;
+    for (Pickup& p : pickups_) {
+        if (p.taken || (p.pos - playerCenter).lengthSq() > kPickupRadius * kPickupRadius) continue;
+        p.taken = true;
+        if (effects) effects->spawn(Effects::Type::Sparkle, p.pos, SDL_Color{255, 110, 140, 255});
+        return true; // one heart per step is plenty
+    }
+    return false;
+}
+
+void HeartPickups::render(SDL_Renderer* r, SDL_Texture* heart, Vec2 camera, float time) const {
+    if (!heart) return;
+    for (size_t i = 0; i < pickups_.size(); ++i) {
+        const Pickup& p = pickups_[i];
+        if (p.taken) continue;
+        const int sx = static_cast<int>(p.pos.x - camera.x);
+        const int sy = static_cast<int>(p.pos.y - camera.y);
+        if (sx < -32 || sy < -32 || sx > kScreenWidth + 32 || sy > kScreenHeight + 32) continue;
+        // Gentle "heartbeat" pulse.
+        const float beat = std::fabs(std::sin(time * 3.0f + static_cast<float>(i)));
+        const int w = Sprites::kHeartW * 2 + static_cast<int>(beat * 4.0f);
+        const int h = Sprites::kHeartH * 2 + static_cast<int>(beat * 4.0f);
+        draw::fillEllipse(r, sx, sy + 12, 7, 2, SDL_Color{0, 0, 0, 60});
+        const SDL_Rect dst{sx - w / 2, sy - h / 2 - 2, w, h};
+        SDL_RenderCopy(r, heart, nullptr, &dst);
+    }
+}
+
+int HeartPickups::remaining() const {
+    int n = 0;
+    for (const Pickup& p : pickups_)
+        if (!p.taken) ++n;
+    return n;
+}
+
 } // namespace pd

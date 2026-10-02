@@ -135,6 +135,23 @@ bool Player::takeHit(Vec2 source) {
     return true;
 }
 
+void Player::bounce() {
+    vz_ = tuning_.hopVelocity * 0.85f;
+    if (z_ <= 0.0f) z_ = 0.01f;
+}
+
+void Player::respawnAt(Vec2 pos, bool freshInvincibility) {
+    pos_ = pos;
+    vel_ = {};
+    z_ = 0.0f;
+    vz_ = 0.0f;
+    dashTimer_ = 0.0f;
+    dashCooldown_ = 0.0f;
+    stunTimer_ = 0.0f;
+    if (freshInvincibility) invincibleTimer_ = tuning_.invincibleTime;
+    facing_ = Facing::Down;
+}
+
 RectF Player::hitbox() const {
     // Feet-level box: top-down games feel fairest when only the lower body collides.
     return RectF{pos_.x - kHitboxW * 0.5f, pos_.y - kHitboxH + 2.0f, kHitboxW, kHitboxH};

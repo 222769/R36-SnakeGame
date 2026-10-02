@@ -16,8 +16,10 @@ inline const char* difficultyName(Difficulty d) {
 }
 
 inline Difficulty difficultyFromName(const std::string& s) {
-    if (s == "RELAXED" || s == "relaxed") return Difficulty::Relaxed;
-    if (s == "CHALLENGE" || s == "challenge") return Difficulty::Challenge;
+    std::string up;
+    for (char c : s) up += static_cast<char>(c >= 'a' && c <= 'z' ? c - 'a' + 'A' : c);
+    if (up == "RELAXED" || up == "EASY") return Difficulty::Relaxed;
+    if (up == "CHALLENGE" || up == "HARD") return Difficulty::Challenge;
     return Difficulty::Normal;
 }
 

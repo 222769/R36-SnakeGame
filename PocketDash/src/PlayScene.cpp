@@ -21,7 +21,8 @@ constexpr int kPauseItemCount = 3;
 constexpr float kBannerTime = 2.6f;
 // Height of the HUD strip; the camera may scroll this far above the map.
 constexpr float kHudMargin = 40.0f;
-constexpr SDL_Color kDustColor{245, 240, 225, 200};
+// Results-screen inputs are ignored briefly so gameplay presses don't skip it.
+constexpr float kClearInputDelay = 0.8f;
 
 // "1:05.3" style clock.
 void formatTime(char* out, size_t size, float seconds, bool tenths) {
@@ -44,20 +45,17 @@ PlayScene::PlayScene(Game& game) : Scene(game), camera_(kScreenWidth, kScreenHei
     tiles_.prepare(level_);
     camera_.setBounds(level_.pixelWidth(), level_.pixelHeight(), kHudMargin);
 
+    session_ = std::make_unique<LevelSession>(level_, game.settings().difficulty);
     restart();
     game.audio().playMusic(MusicTrack::Meadow);
 }
 
 void PlayScene::restart() {
-    player_ = Player(level_.spawn);
-    coins_.reset(level_.coins);
-    effects_.clear();
+    session_->restart();
     camera_.setShakeEnabled(game_.settings().screenShake);
-    camera_.snapTo(player_.position());
-    hearts_ = maxHearts_;
-    levelTime_ = 0.0f;
-    stateTime_ = 0.0f;
-    state_ = State::Playing;
+    camera_.snapTo(session_->player().position());
+    overlay_ = Overlay::None;
+    hudHurt_ = 0.0f;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,104 +65,95 @@ void PlayScene::restart() {
 void PlayScene::update(float dt) {
     InputManager& in = game_.input();
     AudioManager& audio = game_.audio();
-    stateTime_ += dt;
 
-    switch (state_) {
-    case State::Info:
+    if (overlay_ == Overlay::Info) {
         if (in.pressed(Action::Select) || in.pressed(Action::B) || in.pressed(Action::A) || in.pressed(Action::Start)) {
-            state_ = State::Playing;
+            overlay_ = Overlay::None;
             audio.play(Sfx::MenuMove);
         }
         return;
-    case State::Paused:
+    }
+    if (overlay_ == Overlay::Paused) {
         updatePauseMenu();
         return;
-    case State::Clear:
-        updateClear(dt);
-        return;
-    case State::Playing:
-        break;
     }
 
-    if (in.pressed(Action::Start)) {
-        state_ = State::Paused;
-        pauseIndex_ = 0;
-        audio.play(Sfx::Pause);
-        return;
-    }
-    if (in.pressed(Action::Select)) {
-        state_ = State::Info;
-        audio.play(Sfx::MenuMove);
-        return;
-    }
-    if (game_.debugEnabled() && in.pressed(Action::R1)) debugWarpToExit();
-    updatePlaying(dt);
-}
-
-void PlayScene::updatePlaying(float dt) {
-    InputManager& in = game_.input();
-    AudioManager& audio = game_.audio();
-    levelTime_ += dt;
     animTime_ += dt;
+    if (hudHurt_ > 0.0f) hudHurt_ -= dt;
+    const LevelSession::State state = session_->state();
+
+    if (state == LevelSession::State::Playing) {
+        if (in.pressed(Action::Start)) {
+            overlay_ = Overlay::Paused;
+            pauseIndex_ = 0;
+            audio.play(Sfx::Pause);
+            return;
+        }
+        if (in.pressed(Action::Select)) {
+            overlay_ = Overlay::Info;
+            audio.play(Sfx::MenuMove);
+            return;
+        }
+        // Debug warps (overlay on): R1 = next to the exit, L1 = next enemy.
+        // Select+L1 toggles the overlay itself, so plain L1 only.
+        if (game_.debugEnabled() && in.pressed(Action::R1) && session_->warpNear(level_.exit)) {
+            camera_.snapTo(session_->player().position());
+            SDL_Log("[debug] Warped next to the exit");
+        }
+        if (game_.debugEnabled() && in.pressed(Action::L1) && !in.down(Action::Select)) {
+            const auto& enemies = session_->enemies();
+            for (size_t tries = 0; tries < enemies.size(); ++tries) {
+                const Enemy& e = enemies[static_cast<size_t>(debugEnemyIndex_++) % enemies.size()];
+                if (e.alive() && session_->warpNear(e.position() + Vec2{0.0f, -64.0f})) {
+                    camera_.snapTo(session_->player().position());
+                    SDL_Log("[debug] Warped near a %s", enemyTypeName(e.type()));
+                    break;
+                }
+            }
+        }
+    }
 
     PlayerInput pin;
     pin.move = in.moveVector();
     pin.hopPressed = in.pressed(Action::A);
     pin.dashPressed = in.pressed(Action::B);
+    handleEvents(session_->update(pin, dt));
 
-    const unsigned events = player_.update(pin, dt, &level_);
-    if (events & kEventHopped) audio.play(Sfx::Jump);
-    if (events & kEventDashed) {
-        audio.play(Sfx::Dash);
-        effects_.spawn(Effects::Type::Dust, player_.position(), kDustColor);
-    }
-    if (events & kEventLanded) effects_.spawn(Effects::Type::Dust, player_.position(), kDustColor);
-
-    // Coins are collected around the body, not the feet.
-    if (coins_.collect(player_.position() - Vec2{0.0f, 10.0f}, &effects_) > 0) audio.play(Sfx::Coin);
-
-    effects_.update(dt);
-    camera_.follow(player_.position() - Vec2{0.0f, 12.0f}, player_.velocity() * 0.18f, dt);
-
-    if (level_.overlapsTile(player_.hitbox(), Tile::Exit)) {
-        state_ = State::Clear;
-        stateTime_ = 0.0f;
-        player_.stop();
-        audio.play(Sfx::LevelComplete);
-        for (int i = 0; i < 3; ++i)
-            effects_.spawn(Effects::Type::Sparkle, level_.exit + Vec2{(i - 1) * 14.0f, -10.0f - i * 6.0f},
-                           SDL_Color{255, 214, 64, 255});
+    const Player& player = session_->player();
+    if (session_->state() == LevelSession::State::Cleared) {
+        // Frame the hero in the upper half, above the results panel.
+        camera_.follow(player.position() + Vec2{0.0f, 110.0f}, {}, dt);
+        updateCleared();
+    } else {
+        camera_.follow(player.position() - Vec2{0.0f, 12.0f}, player.velocity() * 0.18f, dt);
     }
 }
 
-void PlayScene::debugWarpToExit() {
-    // Debug tool: drop the player on the first free tile near the exit.
-    const int ex = static_cast<int>(level_.exit.x) / kTileSize;
-    const int ey = static_cast<int>(level_.exit.y) / kTileSize;
-    const int offsets[][2] = {{0, 2}, {0, 1}, {-2, 0}, {2, 0}, {-1, 0}, {1, 0}, {0, -1}};
-    for (const auto& o : offsets) {
-        Player probe(Level::tileCenter(ex + o[0], ey + o[1]) + Vec2{0.0f, 6.0f});
-        if (level_.overlapsSolid(probe.hitbox()) || level_.overlapsTile(probe.hitbox(), Tile::Exit)) continue;
-        player_.setPosition(probe.position());
-        player_.stop();
-        camera_.snapTo(player_.position());
-        SDL_Log("[debug] Warped next to the exit");
-        return;
+void PlayScene::handleEvents(unsigned events) {
+    AudioManager& audio = game_.audio();
+    if (events & kSessionHopped) audio.play(Sfx::Jump);
+    if (events & kSessionDashed) audio.play(Sfx::Dash);
+    if (events & kSessionCoin) audio.play(Sfx::Coin);
+    if (events & kSessionHeart) audio.play(Sfx::Heart);
+    if (events & kSessionCheckpoint) audio.play(Sfx::Checkpoint);
+    if (events & kSessionStomp) {
+        audio.play(Sfx::EnemyHit);
+        camera_.shake(2.0f, 0.12f);
     }
+    if (events & kSessionSplash) {
+        audio.play(Sfx::Splash);
+        camera_.snapTo(session_->player().position()); // rescued: jump the view back with them
+    }
+    if (events & kSessionHurt) {
+        audio.play(Sfx::PlayerHurt);
+        camera_.shake(6.0f, 0.3f);
+        hudHurt_ = 0.5f;
+    }
+    if (events & kSessionCleared) audio.play(Sfx::LevelComplete);
 }
 
-void PlayScene::updateClear(float dt) {
-    animTime_ += dt;
-    effects_.update(dt);
-
-    // Victory hops while the results are shown.
-    PlayerInput celebrate;
-    celebrate.hopPressed = !player_.isAirborne();
-    player_.update(celebrate, dt, &level_);
-    // Frame the hero in the upper half, above the results panel.
-    camera_.follow(player_.position() + Vec2{0.0f, 110.0f}, {}, dt);
-
-    if (stateTime_ < 0.8f) return; // ignore inputs that were meant for gameplay
+void PlayScene::updateCleared() {
+    if (session_->stateTime() < kClearInputDelay) return;
     InputManager& in = game_.input();
     if (in.pressed(Action::A) || in.pressed(Action::Start)) {
         game_.audio().play(Sfx::MenuSelect);
@@ -180,7 +169,7 @@ void PlayScene::updatePauseMenu() {
     AudioManager& audio = game_.audio();
 
     if (in.pressed(Action::Start) || in.pressed(Action::B)) {
-        state_ = State::Playing;
+        overlay_ = Overlay::None;
         audio.play(Sfx::Pause);
         return;
     }
@@ -195,7 +184,7 @@ void PlayScene::updatePauseMenu() {
     if (in.pressed(Action::A)) {
         audio.play(Sfx::MenuSelect);
         switch (pauseIndex_) {
-        case 0: state_ = State::Playing; break;
+        case 0: overlay_ = Overlay::None; break;
         case 1: restart(); break;
         case 2: game_.changeScene(std::make_unique<TitleScene>(game_)); break;
         default: break;
@@ -209,37 +198,70 @@ void PlayScene::updatePauseMenu() {
 
 void PlayScene::render(SDL_Renderer* r) {
     const Vec2 cam = camera_.position();
+    renderWorld(r, cam);
+    renderHud(r);
+
+    const LevelSession::State state = session_->state();
+    if (state == LevelSession::State::KnockedOut) renderKnockOut(r, cam);
+    if (session_->time() < kBannerTime && state == LevelSession::State::Playing && overlay_ == Overlay::None)
+        renderBanner(r);
+    if (state == LevelSession::State::Cleared) renderClearPanel(r);
+    if (overlay_ == Overlay::Info) renderInfoPanel(r);
+    if (overlay_ == Overlay::Paused) renderPauseMenu(r);
+}
+
+void PlayScene::renderWorld(SDL_Renderer* r, Vec2 cam) const {
+    const Sprites& sprites = game_.sprites();
     tiles_.render(r, cam, animTime_);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    coins_.render(r, game_.sprites().coin(), cam, animTime_);
-    player_.render(r, game_.sprites().player(), cam);
-    effects_.render(r, cam);
 
-    renderHud(r);
-    if (levelTime_ < kBannerTime && state_ == State::Playing) renderBanner(r);
-
-    switch (state_) {
-    case State::Info: renderInfoPanel(r); break;
-    case State::Paused: renderPauseMenu(r); break;
-    case State::Clear: renderClearPanel(r); break;
-    case State::Playing: break;
+    // Ground items first.
+    if (SDL_Texture* flag = sprites.checkpoint()) {
+        const auto& cps = session_->checkpoints();
+        for (size_t i = 0; i < cps.size(); ++i) {
+            const bool active = cps[i].reached; // coloured once touched
+            const int sx = static_cast<int>(cps[i].pos.x - cam.x);
+            const int sy = static_cast<int>(cps[i].pos.y - cam.y);
+            const int size = Sprites::kEnemyFrame * kPixelScale;
+            const SDL_Rect src{active ? Sprites::kEnemyFrame : 0, 0, Sprites::kEnemyFrame, Sprites::kEnemyFrame};
+            const SDL_Rect dst{sx - 12, sy + 4 - size, size, size};
+            SDL_RenderCopy(r, flag, &src, &dst);
+        }
     }
+    session_->coins().render(r, sprites.coin(), cam, animTime_);
+    session_->heartPickups().render(r, sprites.heartFull(), cam, animTime_);
+
+    // Characters, back to front: enemies behind the player first.
+    const Player& player = session_->player();
+    const float py = player.position().y;
+    for (const Enemy& e : session_->enemies())
+        if (e.position().y <= py) e.render(r, sprites.enemies(), cam);
+    player.render(r, sprites.player(), cam);
+    for (const Enemy& e : session_->enemies())
+        if (e.position().y > py) e.render(r, sprites.enemies(), cam);
+
+    session_->effects().render(r, cam);
 }
 
 void PlayScene::renderHud(SDL_Renderer* r) const {
     const BitmapFont& font = game_.font();
+    const int maxHearts = session_->maxHearts();
+    const int hearts = session_->hearts();
 
-    // Hearts (9x8 art at 3x) on a soft backing so they read on any tile.
-    ui::drawPanel(r, SDL_Rect{6, 8, maxHearts_ * 32 + 10, 38}, SDL_Color{20, 16, 40, 140}, SDL_Color{0, 0, 0, 0});
-    for (int i = 0; i < maxHearts_; ++i) {
-        SDL_Texture* tex = i < hearts_ ? game_.sprites().heartFull() : game_.sprites().heartEmpty();
-        const SDL_Rect dst{14 + i * 32, 15, Sprites::kHeartW * 3, Sprites::kHeartH * 3};
+    // Hearts (9x8 art at 3x) on a soft backing; they wobble after damage.
+    const int wobble = hudHurt_ > 0.0f ? static_cast<int>(std::sin(hudHurt_ * 40.0f) * 3.0f) : 0;
+    ui::drawPanel(r, SDL_Rect{6, 8, maxHearts * 32 + 10, 38},
+                  hudHurt_ > 0.0f ? SDL_Color{120, 20, 40, 170} : SDL_Color{20, 16, 40, 140}, SDL_Color{0, 0, 0, 0});
+    for (int i = 0; i < maxHearts; ++i) {
+        SDL_Texture* tex = i < hearts ? game_.sprites().heartFull() : game_.sprites().heartEmpty();
+        const SDL_Rect dst{14 + i * 32 + wobble, 15, Sprites::kHeartW * 3, Sprites::kHeartH * 3};
         SDL_RenderCopy(r, tex, nullptr, &dst);
     }
 
     // Coin counter and clock, top right.
+    const CoinField& coins = session_->coins();
     char coinText[16];
-    std::snprintf(coinText, sizeof(coinText), "%d/%d", coins_.collected(), coins_.total());
+    std::snprintf(coinText, sizeof(coinText), "%d/%d", coins.collected(), coins.total());
     const int textW = BitmapFont::textWidth(coinText, 3);
     const int panelW = textW + 52;
     const int panelX = kScreenWidth - panelW - 6;
@@ -252,20 +274,20 @@ void PlayScene::renderHud(SDL_Renderer* r) const {
     font.drawShadowed(r, panelX + 42, 16, coinText, 3, ui::kYellow);
 
     char clock[24];
-    formatTime(clock, sizeof(clock), levelTime_, false);
+    formatTime(clock, sizeof(clock), session_->time(), false);
     font.drawShadowed(r, kScreenWidth - BitmapFont::textWidth(clock, 2) - 12, 52, clock, 2, ui::kWhite);
 }
 
 void PlayScene::renderBanner(SDL_Renderer* r) const {
     // Shown on whichever half of the screen the hero is not in, so it never
     // hides them. Slides in from that edge, holds, then slides back out.
-    const float heroScreenY = player_.position().y - camera_.position().y;
+    const float heroScreenY = session_->player().position().y - camera_.position().y;
     const bool atBottom = heroScreenY < kScreenHeight * 0.5f;
     constexpr int kH = 62;
     const float rest = atBottom ? static_cast<float>(kScreenHeight - kH - 20) : 64.0f;
     const float hidden = atBottom ? static_cast<float>(kScreenHeight + 4) : -static_cast<float>(kH + 4);
 
-    const float t = levelTime_;
+    const float t = session_->time();
     float slide = 1.0f; // 1 = fully shown
     if (t < 0.3f) slide = t / 0.3f;
     else if (t > kBannerTime - 0.3f) slide = (kBannerTime - t) / 0.3f;
@@ -278,6 +300,21 @@ void PlayScene::renderBanner(SDL_Renderer* r) const {
     ui::drawPanel(r, SDL_Rect{kScreenWidth / 2 - w / 2, iy, w, kH});
     font.drawCentered(r, kScreenWidth / 2, iy + 10, title, 3, ui::kYellow);
     font.drawCentered(r, kScreenWidth / 2, iy + 38, "REACH THE FLAG!", 2, ui::kWhite);
+}
+
+void PlayScene::renderKnockOut(SDL_Renderer* r, Vec2 cam) const {
+    // Dizzy stars circling the hero's head, and a friendly "OOPS!".
+    const Vec2 p = session_->player().position() - cam;
+    const float t = session_->stateTime();
+    for (int i = 0; i < 3; ++i) {
+        const float a = t * 6.0f + static_cast<float>(i) * 2.094f;
+        const int x = static_cast<int>(p.x + std::cos(a) * 14.0f);
+        const int y = static_cast<int>(p.y - 38.0f + std::sin(a) * 5.0f);
+        draw::fillRect(r, x - 3, y - 1, 6, 2, ui::kYellow);
+        draw::fillRect(r, x - 1, y - 3, 2, 6, ui::kYellow);
+    }
+    const int bounce = static_cast<int>(std::fabs(std::sin(t * 5.0f)) * -8.0f);
+    game_.font().drawCentered(r, static_cast<int>(p.x), static_cast<int>(p.y) - 80 + bounce, "OOPS!", 4, ui::kPink);
 }
 
 void PlayScene::renderPauseMenu(SDL_Renderer* r) const {
@@ -300,8 +337,7 @@ void PlayScene::renderPauseMenu(SDL_Renderer* r) const {
 void PlayScene::renderInfoPanel(SDL_Renderer* r) const {
     const BitmapFont& font = game_.font();
     ui::dimScreen(r, 120);
-    const SDL_Rect panel{70, 70, kScreenWidth - 140, 340};
-    ui::drawPanel(r, panel);
+    ui::drawPanel(r, SDL_Rect{70, 70, kScreenWidth - 140, 340});
 
     char title[64];
     std::snprintf(title, sizeof(title), "%s  %s", level_.id.c_str(), level_.name.c_str());
@@ -309,60 +345,68 @@ void PlayScene::renderInfoPanel(SDL_Renderer* r) const {
     font.drawCentered(r, kScreenWidth / 2, 122, worldDef(level_.world).name, 2, ui::kMint);
 
     char coins[48];
-    std::snprintf(coins, sizeof(coins), "COINS: %d / %d", coins_.collected(), coins_.total());
+    std::snprintf(coins, sizeof(coins), "COINS: %d / %d", session_->coins().collected(), session_->coins().total());
     char clock[24];
-    formatTime(clock, sizeof(clock), levelTime_, false);
-    char time[32];
+    formatTime(clock, sizeof(clock), session_->time(), false);
+    char time[40];
     std::snprintf(time, sizeof(time), "TIME:  %s", clock);
+    char mode[40];
+    std::snprintf(mode, sizeof(mode), "MODE:  %s", difficultyName(session_->difficulty()));
 
     const char* lines[] = {
         "GOAL: REACH THE FLAG!",
         coins,
         time,
+        mode,
         "",
         "D-PAD / STICK   MOVE",
-        "A               HOP",
+        "A               HOP / STOMP",
         "B               DASH",
         "START           PAUSE",
         "SELECT+START    QUIT",
     };
-    int y = 158;
+    int y = 154;
     for (const char* line : lines) {
         font.drawShadowed(r, 104, y, line, 2, ui::kWhite);
-        y += 24;
+        y += 22;
     }
-    font.drawCentered(r, kScreenWidth / 2, 382, "PRESS SELECT TO CLOSE", 2, ui::kGrey);
+    font.drawCentered(r, kScreenWidth / 2, 384, "PRESS SELECT TO CLOSE", 2, ui::kGrey);
 }
 
 void PlayScene::renderClearPanel(SDL_Renderer* r) const {
     const BitmapFont& font = game_.font();
     // The panel sits in the lower part of the screen so the hero's victory
-    // hops (centre of the view) stay visible. It grows open over 0.25 s.
+    // hops (upper half of the view) stay visible. It grows open over 0.25 s.
     constexpr int kTop = 250;
     constexpr int kHeight = 216;
-    const float grow = std::min(1.0f, stateTime_ / 0.25f);
+    const float st = session_->stateTime();
+    const float grow = std::min(1.0f, st / 0.25f);
     const int h = static_cast<int>(kHeight * grow);
     ui::dimScreen(r, static_cast<Uint8>(60 * grow));
     ui::drawPanel(r, SDL_Rect{kScreenWidth / 2 - 190, kTop + (kHeight - h) / 2, 380, h});
     if (grow < 1.0f) return;
 
-    const int bounce = static_cast<int>(std::lround(std::fabs(std::sin(stateTime_ * 4.0f)) * -6.0f));
-    font.drawCentered(r, kScreenWidth / 2, kTop + 18 + bounce, "LEVEL CLEAR!", 4, ui::kYellow);
+    const int bounce = static_cast<int>(std::lround(std::fabs(std::sin(st * 4.0f)) * -6.0f));
+    font.drawCentered(r, kScreenWidth / 2, kTop + 16 + bounce, "LEVEL CLEAR!", 4, ui::kYellow);
 
+    const CoinField& coinField = session_->coins();
     char coins[32];
-    std::snprintf(coins, sizeof(coins), "COINS  %d/%d", coins_.collected(), coins_.total());
-    font.drawCentered(r, kScreenWidth / 2, kTop + 70, coins, 3, ui::kWhite);
+    std::snprintf(coins, sizeof(coins), "COINS  %d/%d", coinField.collected(), coinField.total());
+    font.drawCentered(r, kScreenWidth / 2, kTop + 60, coins, 3, ui::kWhite);
     char clock[24];
-    formatTime(clock, sizeof(clock), levelTime_, true);
+    formatTime(clock, sizeof(clock), session_->time(), true);
     char time[40];
     std::snprintf(time, sizeof(time), "TIME  %s", clock);
-    font.drawCentered(r, kScreenWidth / 2, kTop + 102, time, 3, ui::kWhite);
-    if (coins_.collected() == coins_.total())
-        font.drawCentered(r, kScreenWidth / 2, kTop + 134, "ALL COINS!", 2, ui::kMint);
+    font.drawCentered(r, kScreenWidth / 2, kTop + 90, time, 3, ui::kWhite);
+    char foes[40];
+    std::snprintf(foes, sizeof(foes), "FOES DEFEATED  %d", session_->stats().enemiesDefeated);
+    font.drawCentered(r, kScreenWidth / 2, kTop + 122, foes, 2, ui::kWhite);
+    if (coinField.collected() == coinField.total())
+        font.drawCentered(r, kScreenWidth / 2, kTop + 144, "ALL COINS!", 2, ui::kMint);
 
-    if (stateTime_ >= 0.8f) {
-        font.drawCentered(r, kScreenWidth / 2, kTop + 160, "A  PLAY AGAIN", 2, ui::kWhite);
-        font.drawCentered(r, kScreenWidth / 2, kTop + 184, "B  TITLE", 2, ui::kGrey);
+    if (st >= kClearInputDelay) {
+        font.drawCentered(r, kScreenWidth / 2, kTop + 168, "A  PLAY AGAIN", 2, ui::kWhite);
+        font.drawCentered(r, kScreenWidth / 2, kTop + 190, "B  TITLE", 2, ui::kGrey);
     }
 }
 
@@ -371,39 +415,55 @@ void PlayScene::renderClearPanel(SDL_Renderer* r) const {
 // ---------------------------------------------------------------------------
 
 void PlayScene::fillDebugInfo(DebugInfo& info) const {
+    const Player& player = session_->player();
     info.levelId = level_.id.c_str();
     info.hasPlayer = true;
-    info.playerPos = player_.position();
-    info.playerVel = player_.velocity();
-    info.playerZ = player_.height();
-    info.enemyCount = 0;
-    info.coins = coins_.collected();
-    info.coinsTotal = coins_.total();
+    info.playerPos = player.position();
+    info.playerVel = player.velocity();
+    info.playerZ = player.height();
+    info.enemyCount = session_->enemiesAlive();
+    info.coins = session_->coins().collected();
+    info.coinsTotal = session_->coins().total();
+    info.hearts = session_->hearts();
+    info.maxHearts = session_->maxHearts();
     info.hasCamera = true;
     info.camera = camera_.rawPosition();
-    info.levelClear = state_ == State::Clear;
+    info.levelClear = session_->state() == LevelSession::State::Cleared;
 }
 
 void PlayScene::renderDebug(SDL_Renderer* r) const {
     const Vec2 cam = camera_.position();
-    // Solid tiles around the player (what collision is testing against).
-    const int ptx = static_cast<int>(std::floor(player_.position().x / kTileSize));
-    const int pty = static_cast<int>(std::floor(player_.position().y / kTileSize));
+    const Player& player = session_->player();
+    auto toScreen = [&](RectF box) {
+        box.x -= cam.x;
+        box.y -= cam.y;
+        return box;
+    };
+
+    // Solid and dangerous tiles around the player (what collision tests against).
+    const int ptx = static_cast<int>(std::floor(player.position().x / kTileSize));
+    const int pty = static_cast<int>(std::floor(player.position().y / kTileSize));
     for (int ty = pty - 2; ty <= pty + 2; ++ty) {
         for (int tx = ptx - 2; tx <= ptx + 2; ++tx) {
             const Tile t = level_.tileAt(tx, ty);
-            const RectF box{static_cast<float>(tx * kTileSize) - cam.x, static_cast<float>(ty * kTileSize) - cam.y,
+            const RectF box{static_cast<float>(tx * kTileSize), static_cast<float>(ty * kTileSize),
                             static_cast<float>(kTileSize), static_cast<float>(kTileSize)};
-            if (Level::isSolid(t)) draw::rectOutline(r, box, SDL_Color{255, 60, 60, 255});
-            else if (t == Tile::Exit) draw::rectOutline(r, box, SDL_Color{0, 220, 255, 255});
+            if (Level::isSolid(t)) draw::rectOutline(r, toScreen(box), SDL_Color{255, 60, 60, 255});
+            else if (Level::isDanger(t)) draw::rectOutline(r, toScreen(box), SDL_Color{255, 0, 255, 255});
+            else if (t == Tile::Exit) draw::rectOutline(r, toScreen(box), SDL_Color{0, 220, 255, 255});
         }
     }
-    RectF hb = player_.hitbox();
-    hb.x -= cam.x;
-    hb.y -= cam.y;
-    draw::rectOutline(r, hb, player_.isInvincible() ? SDL_Color{255, 80, 80, 255} : SDL_Color{0, 255, 120, 255});
-    const Vec2 p = player_.position() - cam;
+
+    for (const Enemy& e : session_->enemies())
+        if (e.alive()) draw::rectOutline(r, toScreen(e.hitbox()), SDL_Color{255, 150, 0, 255});
+
+    // Player hitbox (red while invincible), feet point and last safe spot.
+    draw::rectOutline(r, toScreen(player.hitbox()),
+                      player.isInvincible() ? SDL_Color{255, 80, 80, 255} : SDL_Color{0, 255, 120, 255});
+    const Vec2 p = player.position() - cam;
     draw::fillRect(r, static_cast<int>(p.x) - 1, static_cast<int>(p.y) - 1, 3, 3, SDL_Color{255, 0, 255, 255});
+    const Vec2 safe = session_->lastSafePosition() - cam;
+    draw::rectOutline(r, RectF{safe.x - 3, safe.y - 3, 6, 6}, SDL_Color{120, 200, 255, 255});
 
     // Camera dead-zone (centre of the view).
     draw::rectOutline(r,

@@ -31,6 +31,12 @@ bool paletteColor(char c, SDL_Color& out) {
     case 'N': out = {107, 62, 38, 255}; return true;   // boots
     case 'g': out = {120, 110, 140, 255}; return true; // empty heart
     case 'w': out = {210, 205, 225, 255}; return true; // empty heart shine
+    case 'C': out = {90, 170, 255, 255}; return true;  // slime
+    case 'c': out = {50, 110, 200, 255}; return true;  // slime shade
+    case 'V': out = {150, 90, 200, 255}; return true;  // beetle shell
+    case 'v': out = {100, 60, 150, 255}; return true;  // beetle shell shade
+    case 'M': out = {250, 235, 210, 255}; return true; // mushroom stem
+    case 'A': out = {80, 220, 200, 255}; return true;  // active checkpoint flag
     case '.': out = {0, 0, 0, 0}; return true;
     default: return false;
     }
@@ -176,6 +182,120 @@ const Art kCoin2 = {
     ".....KK.....",
 };
 
+// --- Enemies (16x16) ---------------------------------------------------------
+
+const Art kSlime0 = {
+    "................",
+    "................",
+    "................",
+    "................",
+    "......KKKK......",
+    "....KKCCCCKK....",
+    "...KCCWWCCCCK...",
+    "..KCCWCCCCCCCK..",
+    "..KCCCCCCCCCCK..",
+    ".KCCCKCCCCKCCCK.",
+    ".KCCCKCCCCKCCCK.",
+    ".KCCCCCCCCCCCCK.",
+    ".KcCCCCKKCCCCcK.",
+    "..KccCCCCCCccK..",
+    "...KKccccccKK...",
+    "................",
+};
+const Art kSlime1 = { // squashed: the "about to hop" telegraph
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    ".....KKKKKK.....",
+    "...KKCCWWCCKK...",
+    "..KCCWCCCCCCCK..",
+    ".KCCCKCCCCKCCCK.",
+    ".KCCCKCCCCKCCCK.",
+    "KCCCCCCCCCCCCCCK",
+    "KcCCCCCKKCCCCCcK",
+    "KccCCCCCCCCCCccK",
+    ".KKccccccccccKK.",
+    "................",
+};
+const Art kBeetle0 = { // seen from above, head to the right
+    "................",
+    "................",
+    "...K..K..K......",
+    "...KKKKKKKKK....",
+    "..KVVVVvVVVVK...",
+    ".KVVWWVvVVVVVKK.",
+    ".KVVWVVvVVVVKNNK",
+    ".KVVVVVvVVVVKNEK",
+    ".KVVVVVvVVVVKNEK",
+    ".KVVVVVvVVVVKNNK",
+    ".KvVVVVvVVVVVKK.",
+    "..KvvVVvVVVvK...",
+    "...KKKKKKKKK....",
+    "...K..K..K......",
+    "................",
+    "................",
+};
+const Art kBeetle1 = { // legs mid-step
+    "................",
+    "................",
+    "....K..K..K.....",
+    "...KKKKKKKKK....",
+    "..KVVVVvVVVVK...",
+    ".KVVWWVvVVVVVKK.",
+    ".KVVWVVvVVVVKNNK",
+    ".KVVVVVvVVVVKNEK",
+    ".KVVVVVvVVVVKNEK",
+    ".KVVVVVvVVVVKNNK",
+    ".KvVVVVvVVVVVKK.",
+    "..KvvVVvVVVvK...",
+    "...KKKKKKKKK....",
+    "....K..K..K.....",
+    "................",
+    "................",
+};
+const Art kMushroom = {
+    "................",
+    ".....KKKKKK.....",
+    "...KKRRRRRRKK...",
+    "..KRRWWRRRRRRK..",
+    ".KRRWWWRRRWWRRK.",
+    ".KRRRWRRRRWWRRK.",
+    "KRRRRRRRWRRRRRRK",
+    "KRWWRRRWWWRRRRRK",
+    "KrrrrrrrrrrrrrrK",
+    ".KKKKMMMMMMKKKK.",
+    "....KMEMMEMK....",
+    "....KMEMMEMK....",
+    "....KMMMMMMK....",
+    "....KMPMMPMK....",
+    ".....KKKKKK.....",
+    "................",
+};
+
+// --- Checkpoint flag (16x16); the unreached version is drawn in grey -----------
+
+const Art kCheckpoint = {
+    "................",
+    "....KK..........",
+    "....KWKKKKK.....",
+    "....KWKAAAAK....",
+    "....KWKAAAAAK...",
+    "....KWKAAAAAAK..",
+    "....KWKAAAAAK...",
+    "....KWKAAAAK....",
+    "....KWKKKKK.....",
+    "....KWK.........",
+    "....KWK.........",
+    "....KWK.........",
+    "..KKKKKKK.......",
+    "..KgggggK.......",
+    "..KKKKKKK.......",
+    "................",
+};
+
 struct NamedArt {
     const char* name;
     const Art* art;
@@ -195,14 +315,22 @@ const NamedArt kAllArt[] = {
     {"coin0", &kCoin0, Sprites::kCoinSize},
     {"coin1", &kCoin1, Sprites::kCoinSize},
     {"coin2", &kCoin2, Sprites::kCoinSize},
+    {"slime0", &kSlime0, Sprites::kEnemyFrame},
+    {"slime1", &kSlime1, Sprites::kEnemyFrame},
+    {"beetle0", &kBeetle0, Sprites::kEnemyFrame},
+    {"beetle1", &kBeetle1, Sprites::kEnemyFrame},
+    {"mushroom", &kMushroom, Sprites::kEnemyFrame},
+    {"checkpoint", &kCheckpoint, Sprites::kEnemyFrame},
 };
 
-void blitArt(SDL_Surface* surface, const Art& art, int ox, int oy) {
+// `from`/`to` optionally swap one palette character (e.g. a grey variant).
+void blitArt(SDL_Surface* surface, const Art& art, int ox, int oy, char from = 0, char to = 0) {
     for (size_t y = 0; y < art.size(); ++y) {
         const char* row = art[y];
         for (int x = 0; row[x] != '\0'; ++x) {
             SDL_Color c{};
-            if (!paletteColor(row[x], c) || c.a == 0) continue;
+            const char ch = (from && row[x] == from) ? to : row[x];
+            if (!paletteColor(ch, c) || c.a == 0) continue;
             const SDL_Rect px{ox + x, oy + static_cast<int>(y), 1, 1};
             SDL_FillRect(surface, &px, SDL_MapRGBA(surface->format, c.r, c.g, c.b, c.a));
         }
@@ -320,7 +448,26 @@ bool Sprites::create(SDL_Renderer* renderer, const std::string& spriteDir) {
         coin_ = toTexture(renderer, sheet.get());
     }
 
-    const bool ok = player_ && heartFull_ && heartEmpty_ && coin_;
+    enemies_ = loadOverride(renderer, spriteDir, "enemies", kEnemyFrame * 2, kEnemyFrame * kEnemyRows);
+    if (!enemies_) {
+        SurfacePtr sheet = makeSurface(kEnemyFrame * 2, kEnemyFrame * kEnemyRows);
+        if (!sheet) return false;
+        const Art* frames[kEnemyRows][2] = {{&kSlime0, &kSlime1}, {&kBeetle0, &kBeetle1}, {&kMushroom, &kMushroom}};
+        for (int row = 0; row < kEnemyRows; ++row)
+            for (int f = 0; f < 2; ++f) blitArt(sheet.get(), *frames[row][f], f * kEnemyFrame, row * kEnemyFrame);
+        enemies_ = toTexture(renderer, sheet.get());
+    }
+
+    checkpoint_ = loadOverride(renderer, spriteDir, "checkpoint", kEnemyFrame * 2, kEnemyFrame);
+    if (!checkpoint_) {
+        SurfacePtr sheet = makeSurface(kEnemyFrame * 2, kEnemyFrame);
+        if (!sheet) return false;
+        blitArt(sheet.get(), kCheckpoint, 0, 0, 'A', 'g'); // frame 0: not reached yet
+        blitArt(sheet.get(), kCheckpoint, kEnemyFrame, 0);  // frame 1: active
+        checkpoint_ = toTexture(renderer, sheet.get());
+    }
+
+    const bool ok = player_ && heartFull_ && heartEmpty_ && coin_ && enemies_ && checkpoint_;
     if (!ok) SDL_Log("[sprites] Failed to create sprites: %s", SDL_GetError());
     return ok;
 }

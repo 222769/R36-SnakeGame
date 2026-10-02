@@ -1,17 +1,18 @@
 #pragma once
 
 #include "Camera.h"
-#include "Collectibles.h"
-#include "Effects.h"
 #include "Level.h"
-#include "Player.h"
+#include "LevelSession.h"
 #include "Scene.h"
 #include "TileSet.h"
 
+#include <memory>
+
 namespace pd {
 
-// Gameplay scene: one level with its tile map, camera, coins and exit.
-// Phase 2 plays the built-in test meadow; Phase 5 loads World 1 from files.
+// Gameplay scene: presents a LevelSession (the simulation) with a camera,
+// sound, HUD and menus. Phase 3 plays the built-in test meadow; Phase 5
+// loads World 1 from files.
 class PlayScene : public Scene {
 public:
     explicit PlayScene(Game& game);
@@ -23,33 +24,30 @@ public:
     void renderDebug(SDL_Renderer* r) const override;
 
 private:
-    enum class State { Playing, Paused, Info, Clear };
+    enum class Overlay { None, Paused, Info };
 
     void restart();
-    void updatePlaying(float dt);
+    void handleEvents(unsigned events);
     void updatePauseMenu();
-    void updateClear(float dt);
-    void debugWarpToExit();
+    void updateCleared();
+    void renderWorld(SDL_Renderer* r, Vec2 cam) const;
     void renderHud(SDL_Renderer* r) const;
     void renderBanner(SDL_Renderer* r) const;
+    void renderKnockOut(SDL_Renderer* r, Vec2 cam) const;
     void renderPauseMenu(SDL_Renderer* r) const;
     void renderInfoPanel(SDL_Renderer* r) const;
     void renderClearPanel(SDL_Renderer* r) const;
 
-    Level level_;
+    Level level_; // must outlive session_
     TileSet tiles_;
     Camera camera_;
-    CoinField coins_;
-    Effects effects_;
-    Player player_;
+    std::unique_ptr<LevelSession> session_;
 
-    State state_ = State::Playing;
+    Overlay overlay_ = Overlay::None;
     int pauseIndex_ = 0;
-    int hearts_ = 3;
-    int maxHearts_ = 3;
-    float levelTime_ = 0.0f;  // gameplay clock (stops when paused / cleared)
-    float animTime_ = 0.0f;   // drives tile and coin animation
-    float stateTime_ = 0.0f;  // time spent in the current state
+    float animTime_ = 0.0f;  // drives tile, coin and HUD animation
+    float hudHurt_ = 0.0f;   // hearts wobble after damage
+    int debugEnemyIndex_ = 0; // L1 debug warp cycles through enemies
 };
 
 } // namespace pd

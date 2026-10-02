@@ -14,7 +14,7 @@ namespace pd {
 // system on top of this.
 class Effects {
 public:
-    enum class Type { Sparkle, Dust };
+    enum class Type { Sparkle, Dust, Splash };
 
     void spawn(Type type, Vec2 pos, SDL_Color color);
     void update(float dt);

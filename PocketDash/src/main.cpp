@@ -22,6 +22,7 @@ void printUsage() {
         "  --software          force the software renderer\n"
         "  --debug             start with the debug overlay (F1 toggles)\n"
         "  --play              skip the title screen\n"
+        "  --difficulty D      relaxed, normal or challenge (saved)\n"
         "  --frames N          quit after N frames\n"
         "  --screenshot FILE   save the last frame as PNG (use with --frames)\n"
         "  --smoke-test        run the scripted self-test and exit (0 = pass)\n"
@@ -42,6 +43,7 @@ int main(int argc, char* argv[]) {
         else if (!std::strcmp(arg, "--software")) options.softwareRenderer = true;
         else if (!std::strcmp(arg, "--debug")) options.debug = true;
         else if (!std::strcmp(arg, "--play")) options.skipTitle = true;
+        else if (!std::strcmp(arg, "--difficulty")) options.difficulty = next();
         else if (!std::strcmp(arg, "--frames")) options.maxFrames = std::atoi(next());
         else if (!std::strcmp(arg, "--screenshot")) options.screenshotPath = next();
         else if (!std::strcmp(arg, "--smoke-test")) options.smokeTest = true;

@@ -13,7 +13,7 @@ void Effects::spawn(Type type, Vec2 pos, SDL_Color color) {
     e.pos = pos;
     e.color = color;
     e.age = 0.0f;
-    e.life = type == Type::Sparkle ? 0.35f : 0.3f;
+    e.life = type == Type::Sparkle ? 0.35f : type == Type::Splash ? 0.5f : 0.3f;
 }
 
 void Effects::update(float dt) {
@@ -47,6 +47,16 @@ void Effects::render(SDL_Renderer* r, Vec2 camera) const {
             if (t < 0.4f) {
                 const int s = static_cast<int>(10.0f * (1.0f - t / 0.4f));
                 draw::fillRect(r, cx - s / 2, cy - s / 2, s, s, SDL_Color{255, 255, 255, c.a});
+            }
+        } else if (e.type == Type::Splash) {
+            // Droplets thrown up and out, falling back down.
+            for (int i = 0; i < 8; ++i) {
+                const float ang = static_cast<float>(i) * 0.785f;
+                const float dist = 6.0f + 20.0f * t;
+                const float lift = 26.0f * t * (1.0f - t) * 4.0f * (0.6f + 0.4f * static_cast<float>(i % 2));
+                const int x = cx + static_cast<int>(std::cos(ang) * dist);
+                const int y = cy + static_cast<int>(std::sin(ang) * dist * 0.5f - lift);
+                draw::fillRect(r, x - 2, y - 2, 4, 4, c);
             }
         } else {
             // Dust: a soft puff that grows and fades.

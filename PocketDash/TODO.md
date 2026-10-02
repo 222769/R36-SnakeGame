@@ -69,15 +69,35 @@ Legend: `[x]` done · `[ ]` to do · `[~]` partly done / skeleton in place
       reachability (every coin and the exit can be reached from the spawn), and a smoke test that
       walks into the flag
 
-## Phase 3: Enemies, damage, health, checkpoints
+## ✅ Phase 3: Enemies, damage, health, checkpoints (complete)
 
-- [ ] Enemy behaviours: Slime (hop towards player), Beetle (patrol), Mushroom (bounce)
-- [ ] Hop on an enemy or dash into it to defeat it (the rules need to be readable for kids)
-- [ ] Contact damage → `Player::takeHit` (knockback and invincibility already exist)
-- [ ] Hearts: lose and restore; collectible heart pickups
-- [ ] Checkpoints (flag): respawn with full hearts; count depends on difficulty
-- [ ] Hazards: thorns/spikes, water (respawn at the last safe tile)
-- [ ] Difficulty scaling: Relaxed = +2 hearts, 0.75x enemy speed, extra checkpoints; Challenge = 1.25x speed, 1.5x score
+- [x] `LevelSession`: SDL-free gameplay simulation (player, enemies, hazards, pickups, checkpoints,
+      exit) reporting events. `PlayScene` is now presentation only (camera, audio, HUD, menus).
+- [x] Enemies, each with a readable telegraph:
+  - Slime: rests, squishes, then hops towards the player (or wanders when far away)
+  - Beetle: patrols left/right or up/down, pausing to turn
+  - Mushroom: bounces; shivers, then big-bounces and sends out a shockwave ring to hop over
+- [x] Enemies never step onto walls, water, thorns, secret walls or the exit
+- [x] Stomp (land from a hop) or dash into an enemy to defeat it; touching one on foot costs a heart
+- [x] Hearts HUD (wobbles and flashes red on damage), knockback, invincibility, screen shake
+- [x] Thorns (feet-only, so hopping over one tile is comfortable) and water (non-solid: hop
+      over it or skim across while dashing; falling in costs a heart and you're rescued to the
+      last safe spot)
+- [x] Heart pickups (left in place while at full health)
+- [x] Checkpoints: flag turns colour when touched, heals to full, and sets the respawn point
+- [x] No game over: at 0 hearts there's an "OOPS!" with dizzy stars, then you respawn at the
+      checkpoint with full hearts and keep your coins
+- [x] Difficulty: Relaxed (5 hearts, 0.75x enemies, extra `r` checkpoints), Normal, Challenge
+      (1.25x enemies, only `C` checkpoints, 1.5x score multiplier, used in Phase 6). `--difficulty` on the command line.
+- [x] Map characters: `s` `b` `B` `m` enemies, `h` heart, `C`/`k`/`r` checkpoints
+- [x] Y-sorted drawing of the player and enemies
+- [x] Debug: enemy hitboxes, danger tiles, last safe spot, HP readout; **L1 warps to the next enemy**
+- [x] Tests: thorns, hop over thorns, water fall plus dash skim, stomp/dash/contact, knock-out →
+      checkpoint respawn, heart pickups, difficulty rules, slime telegraph, enemies avoid danger
+      (20 s sim), mushroom shockwave, debug warp. Smoke test checks the safe route takes no damage on
+      all difficulties.
+- [x] Bugs found by the tests: water rescues kept refreshing invincibility, so repeated falls
+      were free. The debug warp could drop the hero onto the enemy it was aiming at.
 
 ## Phase 4: Collectibles, dash challenges, power-ups
 

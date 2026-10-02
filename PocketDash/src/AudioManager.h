@@ -9,7 +9,7 @@ namespace pd {
 
 enum class Sfx {
     Coin, Jump, Dash, EnemyHit, PlayerHurt, PowerUp, Star, LevelComplete,
-    MenuMove, MenuSelect, Pause,
+    MenuMove, MenuSelect, Pause, Heart, Checkpoint, Splash,
     Count
 };
 
