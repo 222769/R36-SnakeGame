@@ -1,0 +1,227 @@
+# Pocket Dash
+
+A colourful top-down arcade adventure for the **R36S** handheld (ArkOS / Linux),
+written in C++17 with SDL2. No game engine and no emulator: it builds as a
+native ARM Linux executable, and it also runs on a normal PC for development.
+
+> **Pick up and play in seconds.**
+
+**Status:** Phase 1 of 8 is complete: the engine skeleton, input, the player
+and movement. See [TODO.md](TODO.md) for the roadmap.
+
+![Phase 1 title screen](docs/title.png)
+![Phase 1 sandbox](docs/sandbox.png)
+
+---
+
+## Controls
+
+| R36S          | Keyboard (default)  | Action                          |
+|---------------|---------------------|---------------------------------|
+| D-pad / stick | Arrow keys          | Move                            |
+| A             | Z or Space          | Hop / confirm                   |
+| B             | X or Left Shift     | Dash / back                     |
+| X             | A                   | Use power-up *(Phase 4)*        |
+| Y             | S                   | Interact *(Phase 5)*            |
+| Start         | Enter or Esc        | Pause                           |
+| Select        | Backspace or Tab    | Level info                      |
+| Select + Start (hold) | window close | Quit                            |
+| Select + L1   | F1                  | Toggle debug overlay            |
+| –             | F11                 | Toggle fullscreen               |
+
+The spec's keyboard layout puts the X/Y buttons on the **A** and **S** keys,
+which clash with WASD movement. Arrow keys are therefore the default. A
+complete WASD layout (with J/K/L/I as face buttons) is in
+`config/controller.cfg`; uncomment it to switch.
+
+## Controller configuration (R36S)
+
+Different R36S firmware images report different SDL button numbers, so the
+game never assumes a layout. Instead, it reads them from
+**`config/controller.cfg`**:
+
+```ini
+A=1
+B=0
+X=2
+Y=3
+L1=4
+R1=5
+SELECT=12
+START=13
+DPAD_UP=8      # d-pad as buttons; hats are also handled (USE_HAT=1)
+AXIS_X=0       # left stick
+DEADZONE=8000
+```
+
+The defaults match the ArkOS "GO-Super Gamepad" layout used on RK3326
+handhelds. If a button does the wrong thing:
+
+1. Press **Select + L1** (or set `DEBUG_OVERLAY=1` in the config) to show the
+   debug overlay.
+2. Hold the button. Its number appears on the `BTN` line, and the `HAT` and
+   `AXES` lines show the d-pad and stick.
+3. Put that number in `controller.cfg`. You don't need to recompile.
+
+At startup the game also logs the joystick name, GUID, button, axis and hat
+counts, and SDL's own mapping string for the device. Under ArkOS this log goes
+to `log.txt`.
+
+## Building
+
+Requirements: CMake ≥ 3.13, a C++17 compiler, and SDL2, SDL2_image,
+SDL2_ttf and SDL2_mixer development packages.
+
+### Linux (development PC)
+
+```bash
+sudo apt install build-essential cmake pkg-config \
+    libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libsdl2-mixer-dev
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/pocketdash            # windowed 2x; --help lists options
+```
+
+The game finds `assets/` and `config/` by itself: it searches the executable's
+folder and its parents, then the working directory, and `$POCKETDASH_DATA`
+overrides both. So you can run it straight from `build/`.
+
+### Tests
+
+```bash
+cd build && ctest --output-on-failure
+```
+
+* `unit_tests` covers the config parser, input bindings and latching, the
+  joystick event mapping, player physics (acceleration, dash, hop, knockback),
+  save round-trips and data-table validation.
+* `smoke_test` runs the real game loop headless (`SDL_VIDEODRIVER=dummy`). It
+  plays a scripted run through title → walk → dash → hop → pause → resume
+  and checks that the player responds correctly.
+
+To get screenshots without a display:
+`SDL_VIDEODRIVER=dummy ./build/pocketdash --windowed --scale 1 --frames 60 --screenshot shot.png`
+
+### Windows
+
+With [vcpkg](https://vcpkg.io):
+
+```bat
+vcpkg install sdl2 sdl2-image sdl2-ttf sdl2-mixer
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release
+```
+
+With MSYS2 / MinGW, install `mingw-w64-x86_64-SDL2{,_image,_ttf,_mixer}` and
+use the Linux instructions. *(The Windows build is not yet tested. The code
+avoids POSIX-only APIs.)*
+
+### R36S / ArkOS: recommended, Docker cross-build
+
+ArkOS is based on Ubuntu 19.10 (glibc 2.30). A binary built on a current
+distro needs a newer glibc and **will not start** on the device. The Docker
+build compiles inside Ubuntu 20.04 against arm64 SDL2. It also checks that the
+result needs nothing newer than `GLIBC_2.30`.
+
+```bash
+tools/build-arkos.sh          # -> dist/PocketDash/
+# If Docker Hub rate-limits you:
+BASE_IMAGE=mirror.gcr.io/library/ubuntu:20.04 tools/build-arkos.sh
+```
+
+This has been verified: the resulting binary needs at most `GLIBC_2.17` and
+`GLIBCXX_3.4.26`, and the stripped binary is about 140 KB. It links against
+the system SDL2, SDL2_image, SDL2_ttf and SDL2_mixer. If a firmware image
+lacks one of these, put the aarch64 `.so` files in `PocketDash/libs/`. The
+launcher adds that folder to `LD_LIBRARY_PATH`.
+
+Then copy the files to the SD card:
+
+```
+/roms/ports/PocketDash/        <- contents of dist/PocketDash/
+/roms/ports/PocketDash.sh      <- copy of dist/PocketDash/PocketDash.sh
+```
+
+Restart EmulationStation. **Pocket Dash** then appears under *Ports*.
+
+### R36S: native build on the device
+
+If the device has a compiler and the SDL2 dev packages installed (over SSH):
+
+```bash
+cmake -B build -DPOCKETDASH_R36S=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j4
+cmake --install build --prefix /roms/ports/PocketDash
+```
+
+### ARM cross-compilation (manual)
+
+`cmake/toolchains/aarch64-linux-gnu.cmake` works with any aarch64 GCC:
+
+```bash
+# Against a copy of the device's root filesystem (best compatibility):
+cmake -B build-r36s -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu.cmake \
+      -DPOCKETDASH_R36S=ON -DPOCKETDASH_SYSROOT=/path/to/arkos-rootfs
+cmake --build build-r36s -j
+```
+
+Without `POCKETDASH_SYSROOT`, it uses Debian/Ubuntu multiarch packages
+(`libsdl2-dev:arm64`, …). Remember the glibc caveat above.
+
+`-DPOCKETDASH_R36S=ON` makes the game start fullscreen and adds
+`-mcpu=cortex-a35`. On Linux the game also defaults to fullscreen whenever no
+X11/Wayland session exists (KMSDRM console).
+
+## Project layout
+
+```
+PocketDash/
+├── CMakeLists.txt
+├── README.md / TODO.md
+├── src/
+│   ├── main.cpp            command-line options, entry point
+│   ├── Game.*              SDL setup, fixed-timestep loop, scenes, debug overlay, smoke test
+│   ├── Platform.*          *all* platform-specific decisions (paths, fullscreen)
+│   ├── InputManager.*      keyboard + raw joystick → logical actions, config loading
+│   ├── Player.*            movement, dash, hop, knockback, rendering
+│   ├── Scene.h             scene interface
+│   ├── TitleScene.*        title screen (main menu in Phase 6)
+│   ├── PlayScene.*         gameplay (Phase 1: sandbox arena)
+│   ├── AudioManager.*      SDL2_mixer wrapper, silent when audio/files are missing
+│   ├── SaveManager.*       INI-style key=value store, settings persistence
+│   ├── Sprites.*           programmatic placeholder pixel art (PNG overrides)
+│   ├── UI.*                built-in bitmap font, panels
+│   ├── Draw.*              shape helpers
+│   ├── World.*             the 7 world definitions (themes, rules)
+│   ├── Level.*             tile map model (loader in Phase 5)
+│   ├── Enemy.*             enemy model (behaviours in Phase 3)
+│   ├── PowerUp.*           power-up types and timers
+│   └── Math.h, Constants.h, Settings.h, SdlPtr.h
+├── tests/test_main.cpp
+├── assets/{sprites,audio,fonts,levels}/
+├── config/controller.cfg
+├── save/                   created at runtime (settings.ini, progress)
+├── cmake/toolchains/       aarch64 cross toolchain
+├── dist/PocketDash.sh      ArkOS Ports launcher
+└── tools/                  Docker-based ArkOS build
+```
+
+### Design notes
+
+* **Fixed 60 Hz timestep.** Physics behave identically on a fast PC and on
+  the RK3326. With vsync, timing jitter snaps to exactly one step per frame,
+  which avoids micro-stutter.
+* **640×480 logical resolution** with nearest-neighbour, integer scaling. On
+  the R36S this maps 1:1.
+* **No allocations in the frame loop.** Backgrounds are baked into textures
+  once, text uses a single font atlas, and debug strings use stack buffers.
+* **Input presses are latched** until a simulation step consumes them, so a
+  tap shorter than a frame is never lost and never seen twice.
+* **RAII everywhere.** SDL handles live in `std::unique_ptr` with custom
+  deleters (`SdlPtr.h`). SDL itself is initialised and shut down by a member
+  object.
+* **Art is optional.** Placeholder sprites come from palette strings in
+  `Sprites.cpp`. To replace one, drop `assets/sprites/player.png` (2 frames ×
+  3 facings of 16×16: front, back, side) or `heart_full.png` /
+  `heart_empty.png` into the folder. Missing audio files are silently
+  skipped. See `assets/audio/README.md`.

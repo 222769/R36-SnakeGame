@@ -1,0 +1,18 @@
+# Build output
+PocketDash/build*/
+PocketDash/dist/PocketDash/
+PocketDash/out/
+compile_commands.json
+
+# Save data and logs created at runtime
+PocketDash/save/*
+!PocketDash/save/.gitkeep
+*.log
+log.txt
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
