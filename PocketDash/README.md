@@ -288,18 +288,20 @@ build compiles inside Ubuntu 20.04 against arm64 SDL2. It also checks that the
 result needs nothing newer than `GLIBC_2.30`.
 
 ```bash
-tools/build-arkos.sh          # -> dist/PocketDash/
+tools/build-arkos.sh          # -> dist/PocketDash/ and dist/PocketDash-1.0.0-arkos.zip
 # If Docker Hub rate-limits you:
 BASE_IMAGE=mirror.gcr.io/library/ubuntu:20.04 tools/build-arkos.sh
 ```
 
-This has been verified: the resulting binary needs at most `GLIBC_2.27` and
-`GLIBCXX_3.4.26`, and the stripped binary is about 150 KB. It links against
-the system SDL2, SDL2_image, SDL2_ttf and SDL2_mixer. If a firmware image
-lacks one of these, put the aarch64 `.so` files in `PocketDash/libs/`. The
-launcher adds that folder to `LD_LIBRARY_PATH`.
+This has been verified: the resulting binary needs at most `GLIBC_2.27`.
+It links against the system SDL2, SDL2_image, SDL2_ttf and SDL2_mixer. If a
+firmware image lacks one of these, `PocketDash/log.txt` starts with a
+**MISSING LIBRARIES** list. Put the aarch64 `.so` files in
+`PocketDash/libs/`; the launcher adds that folder to `LD_LIBRARY_PATH`.
 
-Then copy the files to the SD card:
+The easiest install is the release archive: unzip
+`PocketDash-1.0.0-arkos.zip` into `/roms/ports/` on the SD card. Or copy the
+files by hand:
 
 ```
 /roms/ports/PocketDash/        <- contents of dist/PocketDash/
@@ -307,6 +309,15 @@ Then copy the files to the SD card:
 ```
 
 Restart EmulationStation. **Pocket Dash** then appears under *Ports*.
+
+**Checking performance on the device.** Over SSH, run
+`/roms/ports/PocketDash.sh --bench` and read the end of
+`/roms/ports/PocketDash/log.txt`. It plays a scripted boss fight (the
+busiest scene) for 15 seconds, then prints the average, 95th-percentile and
+worst times for update, render and present, the frame rate, and a verdict
+("OK: holds 60 FPS" or "SLOW"). SDL batches drawing until present, so
+present includes the real drawing work and, with vsync, the wait for the
+display.
 
 ### R36S: native build on the device
 

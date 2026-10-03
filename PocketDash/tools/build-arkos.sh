@@ -35,7 +35,19 @@ docker run --rm -u "$(id -u):$(id -g)" -v "$ROOT:/src" "$IMAGE" bash -c '
     fi
 '
 
+# Release archive: PocketDash/ (game folder) + PocketDash.sh (Ports entry),
+# laid out exactly as they go into /roms/ports/.
+VERSION=$(sed -n "s/^project(PocketDash VERSION \([0-9.]*\).*/\1/p" "$ROOT/CMakeLists.txt")
+ZIP="$ROOT/dist/PocketDash-$VERSION-arkos.zip"
+STAGE="$(mktemp -d)"
+cp -r "$ROOT/dist/PocketDash" "$STAGE/PocketDash"
+cp "$ROOT/dist/PocketDash/PocketDash.sh" "$STAGE/PocketDash.sh"
+rm -f "$ZIP"
+(cd "$STAGE" && cmake -E tar cf "$ZIP" --format=zip PocketDash PocketDash.sh)
+rm -rf "$STAGE"
+
 echo
 echo "Done: $ROOT/dist/PocketDash"
+echo "Release archive: $ZIP (unzip it into /roms/ports/)"
 echo "Copy dist/PocketDash/ to /roms/ports/PocketDash/ and"
 echo "dist/PocketDash/PocketDash.sh to /roms/ports/PocketDash.sh"

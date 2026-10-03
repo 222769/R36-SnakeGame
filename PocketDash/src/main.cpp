@@ -34,6 +34,7 @@ void printUsage() {
         "  --screenshot FILE   save the last frame as PNG (use with --frames)\n"
         "  --smoke-test        run the scripted self-test and exit (0 = pass)\n"
         "  --export-audio DIR  write the built-in sounds and music as WAV files\n"
+        "  --bench             play a scripted boss fight and print frame times\n"
         "  --menu-test         walk through every menu with scripted input (0 = pass)\n"
         "  --scene NAME        start on: title, menu, levels, scores, settings, controls, collection\n"
         "  --demo-progress     use sample progress (records, gems); nothing is saved\n"
@@ -103,6 +104,7 @@ int main(int argc, char* argv[]) {
         else if (!std::strcmp(arg, "--screenshot")) options.screenshotPath = next();
         else if (!std::strcmp(arg, "--smoke-test")) options.smokeTest = true;
         else if (!std::strcmp(arg, "--menu-test")) options.menuTest = true;
+        else if (!std::strcmp(arg, "--bench")) options.bench = true;
         else if (!std::strcmp(arg, "--demo-progress")) options.demoProgress = true;
         else if (!std::strcmp(arg, "--scene")) options.startScene = next();
         else if (!std::strcmp(arg, "--check-levels")) return checkLevels();

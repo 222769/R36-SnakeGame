@@ -25,6 +25,7 @@ struct GameOptions {
     bool smokeTest = false;     // scripted headless run with assertions
     bool menuTest = false;      // scripted headless walk through every menu screen
     bool demoProgress = false;  // sample progress (not saved), for screenshots
+    bool bench = false;         // scripted boss fight with frame-time statistics
     std::string startScene;     // title | menu | levels | scores | settings | collection | controls
     bool skipTitle = false;     // start straight in gameplay
     std::string startLevel;     // level the title screen starts ("" = 1-1, "test" = built-in meadow)
@@ -35,6 +36,8 @@ struct GameOptions {
 
 // Length of the --menu-test script, in frames.
 constexpr int kMenuTestFrames = 560;
+// Length of the --bench run, in frames (15 s at 60 FPS).
+constexpr int kBenchFrames = 900;
 
 // Owns SDL, the window, every engine service and the active scene, and
 // runs the fixed-timestep main loop.
@@ -75,7 +78,9 @@ public:
     // Repaints the hero in the selected outfit.
     void applyOutfit();
     // Scripted / frame-limited runs: nothing is written to the save folder.
-    bool automated() const { return options_.smokeTest || options_.menuTest || options_.maxFrames > 0; }
+    bool automated() const {
+        return options_.smokeTest || options_.menuTest || options_.bench || options_.maxFrames > 0;
+    }
     const Backdrop& backdrop() const { return backdrop_; }
     // Seconds of simulated time since start (stops while minimised).
     double time() const { return simTime_; }
@@ -98,6 +103,8 @@ private:
     void applySmokeTestInput();
     bool checkSmokeTest();
     void applyMenuTestInput();
+    void applyBenchInput();
+    void reportBench() const;
     bool checkMenuTest();
     std::unique_ptr<Scene> makeStartScene();
 
@@ -141,6 +148,12 @@ private:
     float fps_ = 0.0f;
     float frameMs_ = 0.0f;
     char rendererName_[32] = "?";
+
+    // --bench: per-frame CPU times in milliseconds.
+    std::vector<float> benchUpdate_;
+    std::vector<float> benchRender_;
+    std::vector<float> benchPresent_;
+    double benchWallSeconds_ = 0.0;
 
     // Smoke test bookkeeping.
     bool smokeFailed_ = false;

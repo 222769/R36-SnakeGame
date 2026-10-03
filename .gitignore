@@ -1,6 +1,7 @@
 # Build output
 PocketDash/build*/
 PocketDash/dist/PocketDash/
+PocketDash/dist/*.zip
 PocketDash/out/
 compile_commands.json
 

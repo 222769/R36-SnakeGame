@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.13)
 
-project(PocketDash VERSION 0.1.0 LANGUAGES CXX)
+project(PocketDash VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -137,6 +137,12 @@ if(POCKETDASH_BUILD_TESTS)
     add_test(NAME smoke_test COMMAND pocketdash --smoke-test)
     set_tests_properties(smoke_test PROPERTIES
         ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;POCKETDASH_DATA=${CMAKE_CURRENT_SOURCE_DIR}")
+
+    # The frame-time benchmark must run to the end (the boss fight).
+    add_test(NAME bench_runs COMMAND pocketdash --bench)
+    set_tests_properties(bench_runs PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;POCKETDASH_DATA=${CMAKE_CURRENT_SOURCE_DIR}"
+        PASS_REGULAR_EXPRESSION "verdict")
 
     # Walks through every menu screen with scripted input.
     add_test(NAME menu_test COMMAND pocketdash --menu-test)

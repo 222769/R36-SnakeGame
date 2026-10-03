@@ -93,12 +93,13 @@ Game::Game(const GameOptions& options) : options_(options) {
     // The smoke test starts on the title screen so it also covers that scene.
     // The smoke test's script is written for the built-in test meadow.
     if (options_.smokeTest) startLevel_ = "test";
+    else if (options_.bench) startLevel_ = "1-8"; // the busiest scene: boss, rings, particles
     else if (!options_.startLevel.empty()) startLevel_ = options_.startLevel;
 
     scene_ = makeStartScene();
     // Scripted tests count frames, so they skip the wipes; everything else
     // opens with one.
-    transitionsEnabled_ = !options_.smokeTest && !options_.menuTest;
+    transitionsEnabled_ = !options_.smokeTest && !options_.menuTest && !options_.bench;
     irisRects_.reserve(kScreenHeight * 2);
     if (transitionsEnabled_) {
         transition_ = Transition::Opening;
@@ -108,7 +109,7 @@ Game::Game(const GameOptions& options) : options_(options) {
 }
 
 std::unique_ptr<Scene> Game::makeStartScene() {
-    if (options_.skipTitle && !options_.smokeTest && !options_.menuTest)
+    if ((options_.skipTitle || options_.bench) && !options_.smokeTest && !options_.menuTest)
         return std::make_unique<PlayScene>(*this, playLevel());
     const std::string& s = options_.startScene;
     if (s == "menu") return std::make_unique<TitleScene>(*this, true);
@@ -310,7 +311,16 @@ int Game::run() {
     Uint64 last = SDL_GetPerformanceCounter();
     fpsWindowStart_ = last;
     double accumulator = 0.0;
-    const int defaultFrames = options_.smokeTest ? 260 : options_.menuTest ? kMenuTestFrames : 0;
+    const int defaultFrames = options_.smokeTest ? 260 : options_.menuTest ? kMenuTestFrames : options_.bench ? kBenchFrames : 0;
+    const Uint64 runStart = SDL_GetPerformanceCounter();
+    auto msSince = [freq](Uint64 t0) {
+        return static_cast<float>(static_cast<double>(SDL_GetPerformanceCounter() - t0) * 1000.0 / freq);
+    };
+    if (options_.bench) {
+        benchUpdate_.reserve(kBenchFrames);
+        benchRender_.reserve(kBenchFrames);
+        benchPresent_.reserve(kBenchFrames);
+    }
     const int maxFrames = options_.maxFrames > 0 ? options_.maxFrames : defaultFrames;
 
     while (running_) {
@@ -326,11 +336,13 @@ int Game::run() {
         processEvents();
         audio_.update();
 
-        if (options_.smokeTest || options_.menuTest) {
+        if (options_.smokeTest || options_.menuTest || options_.bench) {
             accumulator = kFixedDt; // deterministic: exactly one step per frame
             if (options_.smokeTest) applySmokeTestInput();
-            else applyMenuTestInput();
+            else if (options_.menuTest) applyMenuTestInput();
+            else applyBenchInput();
         }
+        const Uint64 updateStart = SDL_GetPerformanceCounter();
 
         int steps = 0;
         while (accumulator >= kFixedDt && steps < 4 && running_) {
@@ -339,6 +351,7 @@ int Game::run() {
             ++steps;
         }
         if (steps == 4) accumulator = 0.0; // running too slow: drop time rather than lag forever
+        const float updateMs = msSince(updateStart);
 
         if (options_.smokeTest) checkSmokeTest();
         if (options_.menuTest) checkMenuTest();
@@ -346,9 +359,17 @@ int Game::run() {
         ++frameCount_;
         const bool lastFrame = maxFrames > 0 && frameCount_ >= maxFrames;
         if (lastFrame) running_ = false;
+        const Uint64 renderStart = SDL_GetPerformanceCounter();
         render();
+        const float renderMs = msSince(renderStart);
         if (lastFrame && !options_.screenshotPath.empty()) saveScreenshot(options_.screenshotPath);
+        const Uint64 presentStart = SDL_GetPerformanceCounter();
         SDL_RenderPresent(renderer_.get());
+        if (options_.bench) {
+            benchUpdate_.push_back(updateMs);
+            benchRender_.push_back(renderMs);
+            benchPresent_.push_back(msSince(presentStart));
+        }
 
         // FPS counter (updated twice per second).
         ++fpsFrames_;
@@ -362,7 +383,7 @@ int Game::run() {
         frameMs_ = static_cast<float>(static_cast<double>(now - frameStart) / freq * 1000.0);
 
         // Without vsync, sleep off the rest of the frame to save battery.
-        if (!vsync_ && !options_.smokeTest && !options_.menuTest) {
+        if (!vsync_ && !options_.smokeTest && !options_.menuTest && !options_.bench) {
             const double elapsed = static_cast<double>(SDL_GetPerformanceCounter() - frameStart) / freq;
             const double remaining = kFixedDt - elapsed;
             if (remaining > 0.002) SDL_Delay(static_cast<Uint32>(remaining * 1000.0));
@@ -371,6 +392,11 @@ int Game::run() {
 
     saveSettings();
 
+    if (options_.bench) {
+        benchWallSeconds_ = static_cast<double>(SDL_GetPerformanceCounter() - runStart) / freq;
+        reportBench();
+        return 0;
+    }
     if (options_.menuTest) {
         if (!smokeFailed_ && std::strcmp(scene_->name(), "title") != 0) {
             SDL_Log("[menus] FAIL: expected to end on the title screen, got '%s'", scene_->name());
@@ -436,9 +462,13 @@ void Game::renderDebugOverlay() {
 }
 
 bool Game::saveScreenshot(const std::string& path) {
-    int w = 0;
-    int h = 0;
-    SDL_GetRendererOutputSize(renderer_.get(), &w, &h);
+    // With a logical size set, ReadPixels(nullptr) reads the scaled game
+    // viewport (not the letterboxed output), so size the image to match.
+    float sx = 1.0f;
+    float sy = 1.0f;
+    SDL_RenderGetScale(renderer_.get(), &sx, &sy);
+    const int w = static_cast<int>(std::lround(kScreenWidth * sx));
+    const int h = static_cast<int>(std::lround(kScreenHeight * sy));
     SurfacePtr shot(SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_RGBA32));
     if (!shot || SDL_RenderReadPixels(renderer_.get(), nullptr, SDL_PIXELFORMAT_RGBA32, shot->pixels, shot->pitch) != 0) {
         SDL_Log("[game] Screenshot failed: %s", SDL_GetError());
@@ -503,6 +533,50 @@ const MenuCheck kMenuChecks[] = {
 };
 
 } // namespace
+
+void Game::applyBenchInput() {
+    // Walk into the arena to wake the guardian, then keep moving and hopping
+    // around so rings, leaps, particles and the HUD all stay busy.
+    const long f = frameCount_;
+    bool held[kActionCount] = {};
+    if (f >= 10 && f < 90) held[static_cast<int>(Action::Up)] = true;
+    if (f >= 300) {
+        const long phase = (f / 90) % 4;
+        held[static_cast<int>(phase == 0 ? Action::Left : phase == 1 ? Action::Up : phase == 2 ? Action::Right : Action::Down)] = true;
+        if (f % 37 < 2) held[static_cast<int>(Action::A)] = true; // hop now and then
+        if (f % 151 < 2) held[static_cast<int>(Action::B)] = true; // and dash
+    }
+    for (int i = 0; i < kActionCount; ++i) input_.setInjected(static_cast<Action>(i), held[i]);
+}
+
+void Game::reportBench() const {
+    auto stats = [](std::vector<float> v, const char* name) {
+        if (v.empty()) return;
+        std::sort(v.begin(), v.end());
+        double sum = 0.0;
+        for (float x : v) sum += x;
+        const float p95 = v[static_cast<size_t>(static_cast<double>(v.size() - 1) * 0.95)];
+        std::printf("  %-8s avg %6.2f ms   p95 %6.2f ms   max %6.2f ms\n", name, sum / static_cast<double>(v.size()),
+                    static_cast<double>(p95), static_cast<double>(v.back()));
+    };
+    // SDL batches draw calls until present, so present holds the real drawing
+    // work (and, with vsync, the wait for the display).
+    std::vector<float> frame(benchUpdate_.size());
+    for (size_t i = 0; i < frame.size(); ++i) frame[i] = benchUpdate_[i] + benchRender_[i] + benchPresent_[i];
+    std::printf("Pocket Dash %s benchmark: %zu frames, renderer %s, vsync %s\n", POCKETDASH_VERSION, frame.size(),
+                rendererName_, vsync_ ? "on" : "off");
+    stats(benchUpdate_, "update");
+    stats(benchRender_, "render");
+    stats(benchPresent_, "present");
+    stats(frame, "frame");
+    const double fps = benchWallSeconds_ > 0.0 ? static_cast<double>(frame.size()) / benchWallSeconds_ : 0.0;
+    std::printf("  wall     %.1f s, %.1f FPS\n", benchWallSeconds_, fps);
+    std::sort(frame.begin(), frame.end());
+    const float p95 = frame.empty() ? 0.0f : frame[frame.size() * 95 / 100];
+    const bool ok = vsync_ ? fps >= 58.0 : p95 < 14.0f;
+    std::printf("  verdict  %s\n", ok ? "OK: holds 60 FPS" : "SLOW: below 60 FPS - please send this output");
+    std::fflush(stdout);
+}
 
 void Game::applyMenuTestInput() {
     const long f = frameCount_;

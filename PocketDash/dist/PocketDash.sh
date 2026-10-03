@@ -21,7 +21,20 @@ export POCKETDASH_DATA="$GAME_DIR"
 # into PocketDash/libs/ and they will be picked up from there.
 export LD_LIBRARY_PATH="$GAME_DIR/libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-./pocketdash "$@" > "$GAME_DIR/log.txt" 2>&1
+{
+    echo "Pocket Dash launcher: $(date 2>/dev/null)"
+    # Name any missing shared library up front (the most common reason a port
+    # does not start), so log.txt says exactly what to install or copy.
+    if command -v ldd > /dev/null 2>&1; then
+        missing=$(ldd ./pocketdash 2>/dev/null | grep "not found")
+        if [ -n "$missing" ]; then
+            echo "MISSING LIBRARIES (copy aarch64 builds into $GAME_DIR/libs/):"
+            echo "$missing"
+        fi
+    fi
+} > "$GAME_DIR/log.txt" 2>&1
+
+./pocketdash "$@" >> "$GAME_DIR/log.txt" 2>&1
 
 # Return to a clean console (some frontends leave the TTY in graphics mode).
 printf "\033c" > /dev/tty1 2>/dev/null || true

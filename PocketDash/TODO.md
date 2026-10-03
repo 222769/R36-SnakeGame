@@ -220,6 +220,15 @@ Legend: `[x]` done · `[ ]` to do · `[~]` partly done / skeleton in place
 - [ ] Performance pass on the device: profile with the debug overlay, target a stable 60 FPS
 - [ ] Listen on the device and tune the mix (speaker and headphones)
 
+## ✅ Release 1.0.0
+
+- [x] Version 1.0.0, `CHANGELOG.md`
+- [x] `tools/build-arkos.sh` also writes `dist/PocketDash-<version>-arkos.zip` (unzip into `/roms/ports/`)
+- [x] Launcher writes missing shared libraries at the top of `log.txt`
+- [x] `--bench`: scripted boss fight with update/render/present timings and a 60 FPS verdict (CTest `bench_runs`)
+- [x] Screenshots fixed for scaled and letterboxed outputs
+- [ ] Run `PocketDash.sh --bench` on the R36S and record the numbers here
+
 ---
 
 ## Later: other worlds and modes
