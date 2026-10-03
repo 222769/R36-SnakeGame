@@ -230,6 +230,28 @@ void paintTinyGap(const Painter& p, const WorldTheme& t) {
     p.px(10, 10, shade(t.wall, 0.7f));
 }
 
+void paintLock(const Painter& p, const WorldTheme& t) {
+    paintGrass(p, t.ground, 0);
+    const SDL_Color dark{100, 60, 32, 255};
+    const SDL_Color wood{176, 112, 60, 255};
+    // Fence bars with two cross rails.
+    for (int x = 1; x < S; x += 4) {
+        p.rect(x, 1, 3, 14, dark);
+        p.rect(x + 1, 2, 1, 12, wood);
+    }
+    p.rect(0, 4, S, 2, dark);
+    p.rect(0, 11, S, 2, dark);
+    // Big golden padlock: "needs a key".
+    const SDL_Color gold{255, 210, 63, 255};
+    const SDL_Color goldDark{200, 140, 30, 255};
+    p.rect(6, 4, 4, 1, goldDark);
+    p.rect(5, 5, 1, 3, goldDark);
+    p.rect(10, 5, 1, 3, goldDark);
+    p.rect(4, 7, 8, 6, goldDark);
+    p.rect(5, 8, 6, 4, gold);
+    p.rect(7, 9, 2, 2, SDL_Color{40, 28, 60, 255});
+}
+
 } // namespace
 
 bool TileSet::build(SDL_Renderer* renderer, const WorldTheme& theme) {
@@ -260,6 +282,7 @@ bool TileSet::build(SDL_Renderer* renderer, const WorldTheme& theme) {
     paintCrate(slot(kCrate), theme);
     paintBoulder(slot(kBoulder), theme);
     paintTinyGap(slot(kTinyGap), theme);
+    paintLock(slot(kLock), theme);
 
     atlas_.reset(SDL_CreateTextureFromSurface(renderer, s.get()));
     if (!atlas_) SDL_Log("[tiles] Failed to create tile atlas: %s", SDL_GetError());
@@ -296,12 +319,22 @@ void TileSet::prepare(const Level& level) {
             case Tile::Tree: a = kTree; break;
             case Tile::Rock: a = kRock; break;
             case Tile::Water: a = waterLike(x, y - 1) ? kWater0 : kShore0; break;
-            case Tile::Bridge: a = (waterLike(x - 1, y) && waterLike(x + 1, y)) ? kBridgeV : kBridgeH; break;
+            case Tile::Bridge: {
+                // Real water above and below means the bridge runs east-west;
+                // water left and right means north-south. (Neighbouring bridge
+                // tiles don't count as water, or a long bridge would alternate.)
+                auto water = [&](int wx, int wy) { return level.tileAt(wx, wy) == Tile::Water; };
+                if (water(x, y - 1) && water(x, y + 1)) a = kBridgeH;
+                else if (water(x - 1, y) && water(x + 1, y)) a = kBridgeV;
+                else a = water(x, y - 1) || water(x, y + 1) ? kBridgeH : kBridgeV;
+                break;
+            }
             case Tile::Hazard: a = kThorns; break;
             case Tile::Exit: a = kExit0; break;
             case Tile::Crate: a = kCrate; break;
             case Tile::Boulder: a = kBoulder; break;
             case Tile::TinyGap: a = kTinyGap; break;
+            case Tile::Lock: a = kLock; break;
             }
             art_[static_cast<size_t>(y * width_ + x)] = a;
         }

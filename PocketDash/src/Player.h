@@ -19,6 +19,7 @@ struct PlayerInput {
     bool hopPressed = false;  // A
     bool dashPressed = false; // B
     bool usePressed = false;  // X: use the stored power-up (handled by LevelSession)
+    bool interactPressed = false; // Y: read signs, rescue friends (handled by LevelSession)
 };
 
 // Movement feel. All speeds in pixels/second at 640x480.

@@ -31,8 +31,11 @@ public:
 
     // Enemy sheet: 16x16 frames, 2 columns (animation) x 3 rows (type).
     static constexpr int kEnemyFrame = 16;
-    enum EnemyRow { kRowSlime = 0, kRowBeetle = 1, kRowMushroom = 2, kEnemyRows = 3 };
-    // Checkpoint sheet: 2 frames of 16x16 (not reached, active).
+    enum EnemyRow { kRowSlime = 0, kRowBeetle = 1, kRowMushroom = 2, kRowFriend = 3, kEnemyRows = 4 };
+    // Props sheet (checkpoint()): 16x16 frames: flag not reached, flag reached, sign.
+    static constexpr int kPropFlag = 0;
+    static constexpr int kPropFlagReached = 1;
+    static constexpr int kPropSign = 2;
 
     // Item sheet: 12x12 frames in a row: star, empty star, gem, then one
     // icon per power-up (see itemFrame).
@@ -40,7 +43,8 @@ public:
     static constexpr int kItemStar = 0;
     static constexpr int kItemStarEmpty = 1;
     static constexpr int kItemGem = 2;
-    static constexpr int kItemFrames = 3 + kPowerUpCount - 1;
+    static constexpr int kItemKey = 3 + kPowerUpCount - 1;
+    static constexpr int kItemFrames = kItemKey + 1;
     static constexpr int itemFrame(PowerUpType t) { return 2 + static_cast<int>(t); }
 
     bool create(SDL_Renderer* renderer, const std::string& spriteDir);

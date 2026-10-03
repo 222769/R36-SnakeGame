@@ -44,7 +44,7 @@ private:
 // Stars (three hidden per level), gems (rare) and power-up bubbles.
 class ItemField {
 public:
-    enum class Kind { Star, Gem, PowerUp };
+    enum class Kind { Star, Gem, PowerUp, Key };
     static constexpr float kPickupRadius = 18.0f;
 
     struct Pickup {
@@ -54,7 +54,7 @@ public:
     };
 
     void reset(const std::vector<Vec2>& stars, const std::vector<Vec2>& gems,
-               const std::vector<PowerUpSpawn>& powerUps);
+               const std::vector<PowerUpSpawn>& powerUps, const std::vector<Vec2>& keys = {});
 
     // Collects items within reach. Power-ups are only taken when
     // `canTakePowerUp` (the slot is empty); otherwise they wait on the ground.

@@ -42,9 +42,19 @@ void LevelSession::restart() {
     player_ = Player(level_.spawn);
     coins_.reset(level_.coins);
     heartPickups_.reset(level_.hearts);
-    items_.reset(level_.stars, level_.gems, level_.powerUps);
+    items_.reset(level_.stars, level_.gems, level_.powerUps, level_.keys);
     powers_.clear();
     goldenStar_ = false;
+    keysHeld_ = 0;
+    lockHintLatch_ = false;
+    exitHintLatch_ = false;
+    secretFound_.assign(static_cast<size_t>(level_.secretCount()), false);
+    secretsFound_ = 0;
+    friends_.clear();
+    for (Vec2 f : level_.friends) friends_.push_back({f, false, 0.0f});
+    rafts_.clear();
+    for (const RaftSpawn& r : level_.rafts) rafts_.push_back({r.pos, r.dir});
+    readingSign_ = -1;
 
     enemies_.clear();
     enemies_.reserve(level_.enemies.size());
@@ -79,6 +89,11 @@ unsigned LevelSession::update(const PlayerInput& input, float dt) {
     unsigned events = kSessionNone;
     stateTime_ += dt;
 
+    if (state_ == State::TimeUp) {
+        effects_.update(dt);
+        return events;
+    }
+
     if (state_ == State::Cleared) {
         // Victory hops while the results are shown.
         PlayerInput celebrate;
@@ -103,7 +118,11 @@ unsigned LevelSession::update(const PlayerInput& input, float dt) {
     }
 
     time_ += dt;
+    for (Friend& f : friends_)
+        if (f.rescued) f.rescueTime += dt;
+    updateRafts(dt); // carries the player before they move
     updatePowerUps(input.usePressed, dt, events);
+    if (input.interactPressed) interact(events);
     const unsigned pe = player_.update(input, dt, &level_);
     if (pe & kEventHopped) events |= kSessionHopped;
     if (pe & kEventDashed) {
@@ -116,20 +135,36 @@ unsigned LevelSession::update(const PlayerInput& input, float dt) {
     }
 
     smashBlocks(events);
+    updateLocksAndSecrets(events);
     updateEnemies(dt, events);
     if (state_ == State::Playing) updateHazards(events);
     if (state_ == State::Playing) updatePickups(dt, events);
 
-    if (state_ == State::Playing && level_.overlapsTile(player_.hitbox(), Tile::Exit)) {
+    const bool atExit = state_ == State::Playing && level_.overlapsTile(player_.hitbox(), Tile::Exit);
+    if (atExit && !objectiveComplete()) {
+        if (!exitHintLatch_) events |= kSessionExitLocked;
+        exitHintLatch_ = true;
+    } else if (!atExit) {
+        exitHintLatch_ = false;
+    }
+    if (atExit && objectiveComplete()) {
         state_ = State::Cleared;
         stateTime_ = 0.0f;
         player_.stop();
         events |= kSessionCleared;
         goldenStar_ = items_.starsCollected() == items_.starsTotal() && coins_.collected() == coins_.total() &&
-                      items_.gemsCollected() == items_.gemsTotal();
+                      items_.gemsCollected() == items_.gemsTotal() && friendsRescued() == static_cast<int>(friends_.size()) &&
+                      secretsFound_ == level_.secretCount();
         if (goldenStar_) events |= kSessionGoldenStar;
         for (int i = 0; i < 3; ++i)
             effects_.spawn(Effects::Type::Sparkle, level_.exit + Vec2{(i - 1) * 14.0f, -10.0f - i * 6.0f}, kGold);
+    }
+
+    if (state_ == State::Playing && timeLimit() > 0.0f && time_ >= timeLimit()) {
+        state_ = State::TimeUp;
+        stateTime_ = 0.0f;
+        player_.stop();
+        events |= kSessionTimeUp;
     }
 
     effects_.update(dt);
@@ -173,7 +208,7 @@ void LevelSession::updateHazards(unsigned& events) {
     // Water: only the feet matter, so you can brush past the edge, and a
     // dash skims across.
     const Vec2 feet = player_.position();
-    if (grounded && !player_.isDashing() && level_.tileAtPixel(feet.x, feet.y) == Tile::Water) {
+    if (grounded && !player_.isDashing() && !onRaft() && level_.tileAtPixel(feet.x, feet.y) == Tile::Water) {
         effects_.spawn(Effects::Type::Splash, feet, kWater);
         ++stats_.splashes;
         events |= kSessionSplash;
@@ -225,6 +260,10 @@ void LevelSession::updatePickups(float dt, unsigned& events) {
         case ItemField::Kind::PowerUp:
             powers_.store(got[i].power);
             events |= kSessionPowerUpGet;
+            break;
+        case ItemField::Kind::Key:
+            ++keysHeld_;
+            events |= kSessionKey;
             break;
         }
     }
@@ -379,6 +418,188 @@ void LevelSession::smashBlocks(unsigned& events) {
             effects_.spawn(Effects::Type::Dust, c + Vec2{0.0f, 8.0f}, kDustColor);
             effects_.spawn(Effects::Type::Sparkle, c, kChips);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: objectives, rafts, keys, friends, signs, secrets
+// ---------------------------------------------------------------------------
+
+int LevelSession::friendsRescued() const {
+    int n = 0;
+    for (const Friend& f : friends_)
+        if (f.rescued) ++n;
+    return n;
+}
+
+bool LevelSession::objectiveComplete() const {
+    int have = 0;
+    int need = 0;
+    objectiveProgress(have, need);
+    return have >= need;
+}
+
+void LevelSession::objectiveProgress(int& have, int& need) const {
+    switch (level_.objective) {
+    case Objective::ReachExit: have = need = 0; return;
+    case Objective::Coins: have = coins_.collected(); need = level_.goal; return;
+    case Objective::Stars: have = items_.starsCollected(); need = items_.starsTotal(); return;
+    case Objective::Rescue: have = friendsRescued(); need = static_cast<int>(friends_.size()); return;
+    case Objective::DefeatAll:
+        need = static_cast<int>(enemies_.size());
+        have = need - enemiesAlive();
+        return;
+    }
+}
+
+float LevelSession::timeLimit() const {
+    if (level_.timeLimit <= 0.0f) return 0.0f;
+    return difficulty_ == Difficulty::Relaxed ? level_.timeLimit * 1.5f : level_.timeLimit;
+}
+
+float LevelSession::timeLeft() const {
+    const float limit = timeLimit();
+    return limit > 0.0f ? std::max(0.0f, limit - time_) : 0.0f;
+}
+
+bool LevelSession::onRaft() const {
+    // Forgiving: feet within 10 px of a raft count as on it, so stepping off
+    // just as it turns around never drops you in the water.
+    const Vec2 feet = player_.position();
+    for (const Raft& r : rafts_) {
+        RectF safe = r.rect();
+        safe.x -= 10.0f;
+        safe.y -= 10.0f;
+        safe.w += 20.0f;
+        safe.h += 20.0f;
+        if (safe.contains(feet)) return true;
+    }
+    return false;
+}
+
+void LevelSession::updateRafts(float dt) {
+    const Vec2 feet = player_.position();
+    for (Raft& r : rafts_) {
+        // Turn around once the raft's centre reaches the last water tile.
+        // (Checking its leading edge instead stopped it short of the bank,
+        // leaving a gap of water exactly where you step aboard.) Being
+        // 40 px wide, it then overlaps each bank by a few pixels.
+        const Vec2 lead = r.pos + r.dir * (static_cast<float>(kTileSize) * 0.5f);
+        if (level_.tileAtPixel(lead.x, lead.y) != Tile::Water) r.dir = -r.dir;
+        const Vec2 delta = r.dir * (kRaftSpeed * dt);
+        // A hero standing on the raft (or hopping above it) rides along;
+        // walls still stop them.
+        const bool riding = r.rect().contains(feet) && player_.height() < 40.0f;
+        r.pos += delta;
+        if (riding) {
+            const Vec2 moved = moveAndCollide(level_, player_.hitbox(), delta, 0.0f, nullptr, player_.modifiers().pass);
+            player_.setPosition(player_.position() + moved);
+        }
+    }
+}
+
+void LevelSession::updateLocksAndSecrets(unsigned& events) {
+    // Gates: bump into one while holding a key and the whole gate opens.
+    RectF reach = player_.hitbox();
+    reach.x -= 4.0f;
+    reach.y -= 4.0f;
+    reach.w += 8.0f;
+    reach.h += 8.0f;
+    if (level_.overlapsTile(reach, Tile::Lock)) {
+        if (keysHeld_ > 0) {
+            const int x0 = static_cast<int>(std::floor(reach.left() / kTileSize));
+            const int y0 = static_cast<int>(std::floor(reach.top() / kTileSize));
+            const int x1 = static_cast<int>(std::floor((reach.right() - 0.001f) / kTileSize));
+            const int y1 = static_cast<int>(std::floor((reach.bottom() - 0.001f) / kTileSize));
+            std::vector<std::pair<int, int>> stack;
+            for (int ty = y0; ty <= y1; ++ty)
+                for (int tx = x0; tx <= x1; ++tx)
+                    if (level_.tileAt(tx, ty) == Tile::Lock) stack.push_back({tx, ty});
+            // Flood-fill the connected gate so a wide gate opens in one go.
+            while (!stack.empty()) {
+                const auto [tx, ty] = stack.back();
+                stack.pop_back();
+                if (level_.tileAt(tx, ty) != Tile::Lock) continue;
+                level_.setTile(tx, ty, Tile::Ground);
+                effects_.spawn(Effects::Type::Sparkle, Level::tileCenter(tx, ty), kGold);
+                const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (const auto& d : dirs) stack.push_back({tx + d[0], ty + d[1]});
+            }
+            --keysHeld_;
+            events |= kSessionGateOpened;
+        } else if (!lockHintLatch_) {
+            events |= kSessionLocked;
+        }
+        lockHintLatch_ = true;
+    } else {
+        lockHintLatch_ = false;
+    }
+
+    // Secrets: the first step into a hidden passage.
+    const Vec2 feet = player_.position();
+    const int group = level_.secretAt(static_cast<int>(std::floor(feet.x / kTileSize)),
+                                      static_cast<int>(std::floor(feet.y / kTileSize)));
+    if (group >= 0 && !secretFound_[static_cast<size_t>(group)]) {
+        secretFound_[static_cast<size_t>(group)] = true;
+        ++secretsFound_;
+        events |= kSessionSecret;
+        effects_.spawn(Effects::Type::Sparkle, bodyCenter(player_), kMint);
+    }
+}
+
+int LevelSession::nearestFriend() const {
+    int best = -1;
+    float bestD = kInteractRadius * kInteractRadius;
+    for (size_t i = 0; i < friends_.size(); ++i) {
+        if (friends_[i].rescued) continue;
+        const float d = (friends_[i].pos - player_.position()).lengthSq();
+        if (d <= bestD) {
+            bestD = d;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
+
+int LevelSession::nearestSign() const {
+    int best = -1;
+    float bestD = kInteractRadius * kInteractRadius;
+    for (size_t i = 0; i < level_.signs.size(); ++i) {
+        const float d = (level_.signs[i].pos - player_.position()).lengthSq();
+        if (d <= bestD) {
+            bestD = d;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
+
+LevelSession::InteractKind LevelSession::interactTarget(Vec2* where) const {
+    if (const int f = nearestFriend(); f >= 0) {
+        if (where) *where = friends_[static_cast<size_t>(f)].pos;
+        return InteractKind::Friend;
+    }
+    if (const int s = nearestSign(); s >= 0) {
+        if (where) *where = level_.signs[static_cast<size_t>(s)].pos;
+        return InteractKind::Sign;
+    }
+    return InteractKind::None;
+}
+
+void LevelSession::interact(unsigned& events) {
+    // Friends first: rescuing is the more important action.
+    if (const int f = nearestFriend(); f >= 0) {
+        Friend& fr = friends_[static_cast<size_t>(f)];
+        fr.rescued = true;
+        fr.rescueTime = 0.0f;
+        events |= kSessionRescue;
+        effects_.spawn(Effects::Type::Sparkle, fr.pos - Vec2{0.0f, 12.0f}, SDL_Color{255, 150, 200, 255});
+        effects_.spawn(Effects::Type::Sparkle, fr.pos - Vec2{0.0f, 24.0f}, kGold);
+        return;
+    }
+    if (const int s = nearestSign(); s >= 0) {
+        readingSign_ = s;
+        events |= kSessionSign;
     }
 }
 

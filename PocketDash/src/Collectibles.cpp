@@ -74,13 +74,14 @@ void CoinField::attract(Vec2 target, float radius, float dt) {
 // ---------------------------------------------------------------------------
 
 void ItemField::reset(const std::vector<Vec2>& stars, const std::vector<Vec2>& gems,
-                      const std::vector<PowerUpSpawn>& powerUps) {
+                      const std::vector<PowerUpSpawn>& powerUps, const std::vector<Vec2>& keys) {
     items_.clear();
-    items_.reserve(stars.size() + gems.size() + powerUps.size());
+    items_.reserve(stars.size() + gems.size() + powerUps.size() + keys.size());
     for (size_t i = 0; i < stars.size(); ++i)
         items_.push_back({Kind::Star, PowerUpType::None, stars[i], static_cast<int>(i), false});
     for (Vec2 g : gems) items_.push_back({Kind::Gem, PowerUpType::None, g, 0, false});
     for (const PowerUpSpawn& p : powerUps) items_.push_back({Kind::PowerUp, p.type, p.pos, 0, false});
+    for (Vec2 k : keys) items_.push_back({Kind::Key, PowerUpType::None, k, 0, false});
     starsTotal_ = static_cast<int>(stars.size());
     gemsTotal_ = static_cast<int>(gems.size());
     starsCollected_ = 0;
@@ -101,9 +102,10 @@ int ItemField::collect(Vec2 playerCenter, bool canTakePowerUp, Effects* effects,
         if (it.kind == Kind::Gem) ++gemsCollected_;
         out[n++] = Pickup{it.kind, it.power, it.index};
         if (effects) {
-            const SDL_Color c = it.kind == Kind::Star  ? SDL_Color{255, 230, 90, 255}
-                                : it.kind == Kind::Gem ? SDL_Color{120, 240, 230, 255}
-                                                       : powerUpInfo(it.power).color;
+            const SDL_Color c = it.kind == Kind::Star      ? SDL_Color{255, 230, 90, 255}
+                                : it.kind == Kind::Gem     ? SDL_Color{120, 240, 230, 255}
+                                : it.kind == Kind::Key     ? SDL_Color{255, 210, 63, 255}
+                                                           : powerUpInfo(it.power).color;
             effects->spawn(Effects::Type::Sparkle, it.pos, c);
             if (it.kind != Kind::PowerUp) effects->spawn(Effects::Type::Sparkle, it.pos - Vec2{0.0f, 10.0f}, c);
         }
@@ -132,6 +134,7 @@ void ItemField::render(SDL_Renderer* r, SDL_Texture* items, Vec2 camera, float t
 
         int frame = Sprites::kItemStar;
         if (it.kind == Kind::Gem) frame = Sprites::kItemGem;
+        if (it.kind == Kind::Key) frame = Sprites::kItemKey;
         if (it.kind == Kind::PowerUp) {
             frame = Sprites::itemFrame(it.power);
             // Translucent bubble in the power-up's colour, with a shine.

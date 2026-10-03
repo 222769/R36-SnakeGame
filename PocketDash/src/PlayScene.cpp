@@ -4,6 +4,7 @@
 #include "Constants.h"
 #include "Draw.h"
 #include "Game.h"
+#include "LevelLoader.h"
 #include "TitleScene.h"
 #include "World.h"
 
@@ -36,9 +37,22 @@ void formatTime(char* out, size_t size, float seconds, bool tenths) {
 
 } // namespace
 
-PlayScene::PlayScene(Game& game) : Scene(game), camera_(kScreenWidth, kScreenHeight) {
+PlayScene::PlayScene(Game& game, std::string levelId)
+    : Scene(game), levelId_(std::move(levelId)), camera_(kScreenWidth, kScreenHeight) {
     std::string error;
-    if (!makeTestLevel(level_, &error)) throw std::runtime_error("Built-in level is invalid: " + error);
+    bool loaded = false;
+    if (levelId_ != "test") {
+        loaded = levels::load(levelId_, level_, &error);
+        if (!loaded) SDL_Log("[level] %s - playing the built-in test meadow instead", error.c_str());
+    }
+    if (!loaded) {
+        std::string builtinError;
+        if (!makeTestLevel(level_, &builtinError)) throw std::runtime_error("Built-in level is invalid: " + builtinError);
+        if (levelId_ != "test") showToast("LEVEL FILE ERROR: SEE LOG.TXT");
+        levelId_ = "test";
+    }
+    SDL_Log("[level] Playing %s \"%s\" (%dx%d, objective %s)", level_.id.c_str(), level_.name.c_str(),
+            level_.width(), level_.height(), objectiveName(level_.objective));
 
     const WorldDef& world = worldDef(level_.world);
     if (!tiles_.build(game.renderer(), world.theme)) throw std::runtime_error("Failed to build tile set");
@@ -57,6 +71,37 @@ void PlayScene::restart() {
     camera_.snapTo(session_->player().position());
     overlay_ = Overlay::None;
     hudHurt_ = 0.0f;
+    signIndex_ = -1;
+}
+
+void PlayScene::showToast(const char* text) {
+    std::snprintf(toast_, sizeof(toast_), "%s", text);
+    toastTime_ = 2.2f;
+}
+
+void PlayScene::objectiveText(char* out, size_t size) const {
+    if (!level_.hint.empty()) {
+        std::snprintf(out, size, "%s", level_.hint.c_str());
+        return;
+    }
+    int have = 0;
+    int need = 0;
+    session_->objectiveProgress(have, need);
+    switch (level_.objective) {
+    case Objective::ReachExit: std::snprintf(out, size, "REACH THE FLAG!"); break;
+    case Objective::Coins: std::snprintf(out, size, "COLLECT %d COINS!", need); break;
+    case Objective::Stars: std::snprintf(out, size, "FIND ALL %d STARS!", need); break;
+    case Objective::Rescue: std::snprintf(out, size, "RESCUE %d FRIENDS WITH Y!", need); break;
+    case Objective::DefeatAll: std::snprintf(out, size, "DEFEAT ALL %d FOES!", need); break;
+    }
+}
+
+void PlayScene::goToNextLevel() {
+    const std::string next = levels::nextLevelId(levelId_);
+    if (next.empty())
+        game_.changeScene(std::make_unique<TitleScene>(game_));
+    else
+        game_.changeScene(std::make_unique<PlayScene>(game_, next));
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +112,14 @@ void PlayScene::update(float dt) {
     InputManager& in = game_.input();
     AudioManager& audio = game_.audio();
 
+    if (toastTime_ > 0.0f) toastTime_ -= dt;
+    if (overlay_ == Overlay::Sign) {
+        if (in.pressed(Action::Y) || in.pressed(Action::A) || in.pressed(Action::B) || in.pressed(Action::Start)) {
+            overlay_ = Overlay::None;
+            audio.play(Sfx::MenuMove);
+        }
+        return;
+    }
     if (overlay_ == Overlay::Info) {
         if (in.pressed(Action::Select) || in.pressed(Action::B) || in.pressed(Action::A) || in.pressed(Action::Start)) {
             overlay_ = Overlay::None;
@@ -119,7 +172,17 @@ void PlayScene::update(float dt) {
     pin.hopPressed = in.pressed(Action::A);
     pin.dashPressed = in.pressed(Action::B);
     pin.usePressed = in.pressed(Action::X);
+    pin.interactPressed = in.pressed(Action::Y);
     handleEvents(session_->update(pin, dt));
+    if (session_->state() == LevelSession::State::TimeUp && session_->stateTime() >= kClearInputDelay) {
+        if (in.pressed(Action::A) || in.pressed(Action::Start)) {
+            audio.play(Sfx::MenuSelect);
+            restart();
+        } else if (in.pressed(Action::B)) {
+            audio.play(Sfx::MenuSelect);
+            game_.changeScene(std::make_unique<TitleScene>(game_));
+        }
+    }
 
     const Player& player = session_->player();
     if (session_->state() == LevelSession::State::Cleared) {
@@ -160,7 +223,48 @@ void PlayScene::handleEvents(unsigned events) {
         audio.play(Sfx::ShieldPop);
         camera_.shake(3.0f, 0.15f);
     }
-    if (events & kSessionNoRoom) audio.play(Sfx::Denied);
+    if (events & kSessionNoRoom) {
+        audio.play(Sfx::Denied);
+        showToast("NO ROOM TO GROW HERE!");
+    }
+    if (events & kSessionKey) {
+        audio.play(Sfx::PowerUp);
+        showToast("GOT A KEY!");
+    }
+    if (events & kSessionGateOpened) {
+        audio.play(Sfx::Break);
+        tiles_.prepare(session_->level());
+        showToast("GATE OPENED!");
+    }
+    if (events & kSessionLocked) {
+        audio.play(Sfx::Denied);
+        showToast("LOCKED! FIND A KEY.");
+    }
+    if (events & kSessionRescue) {
+        audio.play(Sfx::Star);
+        char text[48];
+        std::snprintf(text, sizeof(text), "FRIEND RESCUED! %d/%d", session_->friendsRescued(),
+                      static_cast<int>(session_->friends().size()));
+        showToast(text);
+    }
+    if (events & kSessionSecret) {
+        audio.play(Sfx::Gem);
+        showToast("SECRET FOUND!");
+    }
+    if (events & kSessionSign) {
+        audio.play(Sfx::MenuSelect);
+        signIndex_ = session_->readingSign();
+        overlay_ = Overlay::Sign;
+    }
+    if (events & kSessionExitLocked) {
+        audio.play(Sfx::Denied);
+        char goal[48];
+        objectiveText(goal, sizeof(goal));
+        char text[64];
+        std::snprintf(text, sizeof(text), "NOT YET! %s", goal);
+        showToast(text);
+    }
+    if (events & kSessionTimeUp) audio.play(Sfx::PlayerHurt);
     if (events & kSessionBlockBroken) {
         audio.play(Sfx::Break);
         camera_.shake(3.0f, 0.12f);
@@ -173,10 +277,10 @@ void PlayScene::updateCleared() {
     InputManager& in = game_.input();
     if (in.pressed(Action::A) || in.pressed(Action::Start)) {
         game_.audio().play(Sfx::MenuSelect);
-        restart();
+        goToNextLevel();
     } else if (in.pressed(Action::B)) {
         game_.audio().play(Sfx::MenuSelect);
-        game_.changeScene(std::make_unique<TitleScene>(game_));
+        restart();
     }
 }
 
@@ -221,7 +325,11 @@ void PlayScene::render(SDL_Renderer* r) {
     if (state == LevelSession::State::KnockedOut) renderKnockOut(r, cam);
     if (session_->time() < kBannerTime && state == LevelSession::State::Playing && overlay_ == Overlay::None)
         renderBanner(r);
+    if (state == LevelSession::State::Playing && overlay_ == Overlay::None) renderPrompt(r, cam);
+    renderToast(r);
     if (state == LevelSession::State::Cleared) renderClearPanel(r);
+    if (state == LevelSession::State::TimeUp) renderTimeUpPanel(r);
+    if (overlay_ == Overlay::Sign) renderSignDialog(r);
     if (overlay_ == Overlay::Info) renderInfoPanel(r);
     if (overlay_ == Overlay::Paused) renderPauseMenu(r);
 }
@@ -244,6 +352,66 @@ void PlayScene::renderWorld(SDL_Renderer* r, Vec2 cam) const {
             SDL_RenderCopy(r, flag, &src, &dst);
         }
     }
+    // Rafts float on the water, under everything else.
+    for (const LevelSession::Raft& raft : session_->rafts()) {
+        const RectF rr = raft.rect();
+        const int x = static_cast<int>(rr.x - cam.x);
+        const int y = static_cast<int>(rr.y - cam.y) + static_cast<int>(std::sin(animTime_ * 3.0f + rr.x) * 1.5f);
+        const int w = static_cast<int>(rr.w);
+        const int h = static_cast<int>(rr.h);
+        draw::fillRect(r, x + 2, y + 4, w - 4, h - 4, SDL_Color{40, 90, 140, 120}); // shadow in the water
+        draw::fillRect(r, x, y, w, h - 4, SDL_Color{100, 60, 32, 255});
+        for (int py = 2; py < h - 6; py += 8) draw::fillRect(r, x + 2, y + py, w - 4, 6, SDL_Color{186, 124, 70, 255});
+        draw::fillRect(r, x + 6, y, 3, h - 4, SDL_Color{100, 60, 32, 255});
+        draw::fillRect(r, x + w - 9, y, 3, h - 4, SDL_Color{100, 60, 32, 255});
+    }
+
+    // Signs.
+    if (SDL_Texture* props = sprites.checkpoint()) {
+        for (const SignSpawn& sign : level_.signs) {
+            const int size = Sprites::kEnemyFrame * kPixelScale;
+            const SDL_Rect src{Sprites::kPropSign * Sprites::kEnemyFrame, 0, Sprites::kEnemyFrame, Sprites::kEnemyFrame};
+            const SDL_Rect dst{static_cast<int>(sign.pos.x - cam.x) - size / 2, static_cast<int>(sign.pos.y - cam.y) + 4 - size,
+                               size, size};
+            SDL_RenderCopy(r, props, &src, &dst);
+        }
+    }
+
+    // Lost friends hop on the spot (with a "!" bubble); rescued ones hop away and fade.
+    if (SDL_Texture* sheet = sprites.enemies()) {
+        const auto& friends = session_->friends();
+        for (size_t i = 0; i < friends.size(); ++i) {
+            const LevelSession::Friend& f = friends[i];
+            if (f.rescued && f.rescueTime > 1.0f) continue;
+            const float t = animTime_ * 5.0f + static_cast<float>(i);
+            const float lift = f.rescued ? f.rescueTime * 80.0f : std::fabs(std::sin(t)) * 6.0f;
+            const int sx = static_cast<int>(f.pos.x - cam.x);
+            const int sy = static_cast<int>(f.pos.y - cam.y);
+            draw::fillEllipse(r, sx, sy + 2, 8, 3, SDL_Color{0, 0, 0, 70});
+            const int size = Sprites::kEnemyFrame * kPixelScale;
+            const SDL_Rect src{0, Sprites::kRowFriend * Sprites::kEnemyFrame, Sprites::kEnemyFrame, Sprites::kEnemyFrame};
+            const SDL_Rect dst{sx - size / 2, sy + 4 - size - static_cast<int>(lift), size, size};
+            const Uint8 alpha = f.rescued ? static_cast<Uint8>(255.0f * std::max(0.0f, 1.0f - f.rescueTime)) : 255;
+            SDL_SetTextureAlphaMod(sheet, alpha);
+            SDL_RenderCopyEx(r, sheet, &src, &dst, 0.0, nullptr,
+                             static_cast<int>(t * 0.3f) % 2 ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+            SDL_SetTextureAlphaMod(sheet, 255);
+            if (!f.rescued) game_.font().drawCentered(r, sx, sy - 44 - static_cast<int>(lift), "!", 2, ui::kPink);
+        }
+    }
+
+    // Exit flag stays padlocked until the objective is complete.
+    if (!session_->objectiveComplete()) {
+        const int ex = static_cast<int>(level_.exit.x - cam.x);
+        const int ey = static_cast<int>(level_.exit.y - cam.y) - 26 + static_cast<int>(std::sin(animTime_ * 3.0f) * 2.0f);
+        draw::fillRect(r, ex - 5, ey - 7, 10, 2, SDL_Color{200, 140, 30, 255});
+        draw::fillRect(r, ex - 6, ey - 6, 2, 6, SDL_Color{200, 140, 30, 255});
+        draw::fillRect(r, ex + 4, ey - 6, 2, 6, SDL_Color{200, 140, 30, 255});
+        draw::fillRect(r, ex - 8, ey, 16, 12, SDL_Color{200, 140, 30, 255});
+        draw::fillRect(r, ex - 6, ey + 2, 12, 8, SDL_Color{255, 210, 63, 255});
+        draw::fillRect(r, ex - 1, ey + 4, 2, 4, SDL_Color{40, 28, 60, 255});
+    }
+
     session_->coins().render(r, sprites.coin(), cam, animTime_);
     session_->heartPickups().render(r, sprites.heartFull(), cam, animTime_);
     session_->items().render(r, sprites.items(), cam, animTime_);
@@ -306,9 +474,110 @@ void PlayScene::renderHud(SDL_Renderer* r) const {
         font.drawShadowed(r, panelX - 44 - pulse, 16, "x2", 3, ui::kYellow);
     }
 
+    // Clock, or a countdown on timed levels (red in the last 10 seconds).
     char clock[24];
-    formatTime(clock, sizeof(clock), session_->time(), false);
-    font.drawShadowed(r, kScreenWidth - BitmapFont::textWidth(clock, 2) - 12, 52, clock, 2, ui::kWhite);
+    const bool timed = session_->timeLimit() > 0.0f;
+    formatTime(clock, sizeof(clock), timed ? session_->timeLeft() : session_->time(), false);
+    const bool hurry = timed && session_->timeLeft() < 10.0f;
+    const int clockScale = timed ? 3 : 2;
+    const SDL_Color clockColor = hurry && static_cast<int>(animTime_ * 4.0f) % 2 ? ui::kPink : ui::kWhite;
+    font.drawShadowed(r, kScreenWidth - BitmapFont::textWidth(clock, clockScale) - 12, 52, clock, clockScale, clockColor);
+
+    renderObjectiveHud(r);
+}
+
+void PlayScene::renderObjectiveHud(SDL_Renderer* r) const {
+    // Objective progress and keys, right-aligned under the clock.
+    const BitmapFont& font = game_.font();
+    int y = session_->timeLimit() > 0.0f ? 82 : 74;
+    int have = 0;
+    int need = 0;
+    session_->objectiveProgress(have, need);
+    if (need > 0) {
+        const char* label = level_.objective == Objective::Coins     ? "COINS"
+                            : level_.objective == Objective::Stars   ? "STARS"
+                            : level_.objective == Objective::Rescue  ? "FRIENDS"
+                                                                     : "FOES";
+        char text[32];
+        std::snprintf(text, sizeof(text), "%s %d/%d", label, std::min(have, need), need);
+        font.drawShadowed(r, kScreenWidth - BitmapFont::textWidth(text, 2) - 12, y, text, 2,
+                          have >= need ? ui::kMint : ui::kYellow);
+        y += 22;
+    }
+    if (session_->keysHeld() > 0) {
+        if (SDL_Texture* items = game_.sprites().items()) {
+            char text[16];
+            std::snprintf(text, sizeof(text), "x%d", session_->keysHeld());
+            const int tw = BitmapFont::textWidth(text, 2);
+            const SDL_Rect src{Sprites::kItemKey * Sprites::kItemSize, 0, Sprites::kItemSize, Sprites::kItemSize};
+            const SDL_Rect dst{kScreenWidth - tw - 12 - 28, y - 4, 24, 24};
+            SDL_RenderCopy(r, items, &src, &dst);
+            font.drawShadowed(r, kScreenWidth - tw - 12, y, text, 2, ui::kYellow);
+        }
+    }
+}
+
+void PlayScene::renderPrompt(SDL_Renderer* r, Vec2 cam) const {
+    // A bobbing "Y" bubble over whatever Y would interact with.
+    Vec2 where;
+    if (session_->interactTarget(&where) == LevelSession::InteractKind::None) return;
+    const int x = static_cast<int>(where.x - cam.x);
+    const int y = static_cast<int>(where.y - cam.y) - 62 + static_cast<int>(std::sin(animTime_ * 5.0f) * 3.0f);
+    draw::fillCircle(r, x, y, 11, SDL_Color{30, 22, 48, 220});
+    draw::fillCircle(r, x, y, 9, SDL_Color{255, 214, 64, 255});
+    game_.font().draw(r, x - 5, y - 7, "Y", 2, ui::kInk);
+}
+
+void PlayScene::renderToast(SDL_Renderer* r) const {
+    if (toastTime_ <= 0.0f || !toast_[0]) return;
+    const BitmapFont& font = game_.font();
+    const int w = BitmapFont::textWidth(toast_, 2) + 32;
+    // Slide up from the bottom edge, then fade out.
+    const float in = std::min(1.0f, (2.2f - toastTime_) / 0.15f);
+    const int y = kScreenHeight - 64 + static_cast<int>((1.0f - in) * 40.0f);
+    const Uint8 a = static_cast<Uint8>(255.0f * std::min(1.0f, toastTime_ / 0.3f));
+    ui::drawPanel(r, SDL_Rect{kScreenWidth / 2 - w / 2, y, w, 36}, SDL_Color{34, 28, 60, static_cast<Uint8>(a * 0.85f)},
+                  SDL_Color{255, 255, 255, a});
+    font.draw(r, kScreenWidth / 2 - w / 2 + 16, y + 11, toast_, 2, SDL_Color{255, 255, 255, a});
+}
+
+void PlayScene::renderSignDialog(SDL_Renderer* r) const {
+    if (signIndex_ < 0 || signIndex_ >= static_cast<int>(level_.signs.size())) return;
+    const BitmapFont& font = game_.font();
+    const SDL_Rect box{40, 300, kScreenWidth - 80, 150};
+    ui::drawPanel(r, box, SDL_Color{250, 240, 220, 240}, SDL_Color{100, 60, 32, 255});
+
+    // Word-wrap the sign text to the box (scale 2: 12 px per character).
+    const std::string& text = level_.signs[static_cast<size_t>(signIndex_)].text;
+    const size_t perLine = static_cast<size_t>((box.w - 40) / (BitmapFont::kCellW * 2));
+    int y = box.y + 20;
+    size_t pos = 0;
+    while (pos < text.size() && y < box.y + box.h - 40) {
+        size_t len = std::min(perLine, text.size() - pos);
+        if (pos + len < text.size()) {
+            const size_t space = text.rfind(' ', pos + len);
+            if (space != std::string::npos && space > pos) len = space - pos;
+        }
+        font.draw(r, box.x + 20, y, std::string_view(text).substr(pos, len), 2, ui::kInk);
+        y += 22;
+        pos += len;
+        while (pos < text.size() && text[pos] == ' ') ++pos;
+    }
+    font.draw(r, box.x + box.w - BitmapFont::textWidth("Y  OK", 2) - 16, box.y + box.h - 26, "Y  OK", 2,
+              SDL_Color{100, 60, 32, 255});
+}
+
+void PlayScene::renderTimeUpPanel(SDL_Renderer* r) const {
+    const BitmapFont& font = game_.font();
+    ui::dimScreen(r, 120);
+    ui::drawPanel(r, SDL_Rect{kScreenWidth / 2 - 170, 160, 340, 160});
+    const int bounce = static_cast<int>(std::fabs(std::sin(session_->stateTime() * 4.0f)) * -6.0f);
+    font.drawCentered(r, kScreenWidth / 2, 180 + bounce, "TIME UP!", 4, ui::kPink);
+    font.drawCentered(r, kScreenWidth / 2, 228, "SO CLOSE! TRY AGAIN?", 2, ui::kWhite);
+    if (session_->stateTime() >= kClearInputDelay) {
+        font.drawCentered(r, kScreenWidth / 2, 262, "A  RETRY", 2, ui::kWhite);
+        font.drawCentered(r, kScreenWidth / 2, 286, "B  TITLE", 2, ui::kGrey);
+    }
 }
 
 void PlayScene::renderCollectionHud(SDL_Renderer* r) const {
@@ -403,11 +672,13 @@ void PlayScene::renderBanner(SDL_Renderer* r) const {
 
     char title[64];
     std::snprintf(title, sizeof(title), "%s  %s", level_.id.c_str(), level_.name.c_str());
+    char goal[64];
+    objectiveText(goal, sizeof(goal));
     const BitmapFont& font = game_.font();
-    const int w = std::max(BitmapFont::textWidth(title, 3), BitmapFont::textWidth("REACH THE FLAG!", 2)) + 40;
+    const int w = std::max(BitmapFont::textWidth(title, 3), BitmapFont::textWidth(goal, 2)) + 40;
     ui::drawPanel(r, SDL_Rect{kScreenWidth / 2 - w / 2, iy, w, kH});
     font.drawCentered(r, kScreenWidth / 2, iy + 10, title, 3, ui::kYellow);
-    font.drawCentered(r, kScreenWidth / 2, iy + 38, "REACH THE FLAG!", 2, ui::kWhite);
+    font.drawCentered(r, kScreenWidth / 2, iy + 38, goal, 2, ui::kWhite);
 }
 
 void PlayScene::renderKnockOut(SDL_Renderer* r, Vec2 cam) const {
@@ -461,15 +732,17 @@ void PlayScene::renderInfoPanel(SDL_Renderer* r) const {
     char time[64];
     std::snprintf(time, sizeof(time), "TIME %s  MODE %s", clock, difficultyName(session_->difficulty()));
 
+    char goal[64];
+    objectiveText(goal, sizeof(goal));
     const char* lines[] = {
-        "GOAL: REACH THE FLAG!",
+        goal,
         found,
         time,
         "",
         "D-PAD / STICK   MOVE",
         "A               HOP / STOMP",
         "B               DASH / SMASH",
-        "X               USE POWER-UP",
+        "X / Y           POWER-UP / TALK",
         "START           PAUSE",
         "SELECT+START    QUIT",
     };
@@ -536,8 +809,9 @@ void PlayScene::renderClearPanel(SDL_Renderer* r) const {
     }
 
     if (st >= kClearInputDelay) {
-        font.drawCentered(r, kScreenWidth / 2, kTop + 200, "A  PLAY AGAIN", 2, ui::kWhite);
-        font.drawCentered(r, kScreenWidth / 2, kTop + 220, "B  TITLE", 2, ui::kGrey);
+        const bool last = levels::nextLevelId(levelId_).empty();
+        font.drawCentered(r, kScreenWidth / 2, kTop + 200, last ? "A  BACK TO TITLE" : "A  NEXT LEVEL", 2, ui::kWhite);
+        font.drawCentered(r, kScreenWidth / 2, kTop + 220, "B  PLAY AGAIN", 2, ui::kGrey);
     }
 }
 

@@ -1,6 +1,8 @@
 // Pocket Dash — a colourful top-down arcade adventure for the R36S handheld.
 
 #include "Game.h"
+#include "LevelLoader.h"
+#include "Platform.h"
 
 #include <SDL.h>
 
@@ -23,11 +25,34 @@ void printUsage() {
         "  --debug             start with the debug overlay (F1 toggles)\n"
         "  --play              skip the title screen\n"
         "  --difficulty D      relaxed, normal or challenge (saved)\n"
+        "  --level ID          level to start, e.g. 1-3 (\"test\" = built-in meadow)\n"
         "  --frames N          quit after N frames\n"
         "  --screenshot FILE   save the last frame as PNG (use with --frames)\n"
         "  --smoke-test        run the scripted self-test and exit (0 = pass)\n"
+        "  --check-levels      load every level file, report problems and exit\n"
         "  --help              show this help\n",
         POCKETDASH_VERSION);
+}
+
+// Loads every World level through the normal data path. Handy on the device
+// after copying files: prints one line per level, exits 1 on any problem.
+int checkLevels() {
+    int failures = 0;
+    std::printf("Data root: %s\n", pd::platform::dataRoot().c_str());
+    for (int world = 1; world <= pd::kWorldCount; ++world) {
+        for (const std::string& id : pd::levels::worldLevelIds(world)) {
+            pd::Level level;
+            std::string error;
+            if (pd::levels::load(id, level, &error)) {
+                std::printf("  OK    %s  %-18s %dx%d\n", id.c_str(), level.name.c_str(), level.width(), level.height());
+            } else {
+                std::printf("  FAIL  %s  %s\n", id.c_str(), error.c_str());
+                ++failures;
+            }
+        }
+    }
+    std::printf(failures ? "%d level(s) failed\n" : "All levels OK\n", failures);
+    return failures ? 1 : 0;
 }
 
 } // namespace
@@ -44,9 +69,11 @@ int main(int argc, char* argv[]) {
         else if (!std::strcmp(arg, "--debug")) options.debug = true;
         else if (!std::strcmp(arg, "--play")) options.skipTitle = true;
         else if (!std::strcmp(arg, "--difficulty")) options.difficulty = next();
+        else if (!std::strcmp(arg, "--level")) options.startLevel = next();
         else if (!std::strcmp(arg, "--frames")) options.maxFrames = std::atoi(next());
         else if (!std::strcmp(arg, "--screenshot")) options.screenshotPath = next();
         else if (!std::strcmp(arg, "--smoke-test")) options.smokeTest = true;
+        else if (!std::strcmp(arg, "--check-levels")) return checkLevels();
         else if (!std::strcmp(arg, "--help") || !std::strcmp(arg, "-h")) {
             printUsage();
             return 0;

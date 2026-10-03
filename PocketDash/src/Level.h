@@ -26,6 +26,30 @@ enum class Tile : uint8_t {
     Crate,      // solid; smashed by a dash or by Giant Mode
     Boulder,    // solid; only Giant Mode can smash it
     TinyGap,    // a hole in the hedge: solid unless the player is in Tiny Mode
+    Lock,       // locked gate: solid until opened with a key
+};
+
+// What the player must do before the exit flag opens.
+enum class Objective {
+    ReachExit, // just get to the flag
+    Coins,     // collect at least `goal` coins
+    Stars,     // collect all the stars
+    Rescue,    // rescue every lost friend (Y)
+    DefeatAll, // defeat every enemy
+};
+
+const char* objectiveName(Objective o);     // "exit", "coins", ... (file format)
+bool objectiveFromName(const std::string& s, Objective& out);
+
+struct SignSpawn {
+    Vec2 pos;
+    std::string text; // from the level file's [signs] section, in map order
+};
+
+// A raft floats on water along one axis, turning around when the water ends.
+struct RaftSpawn {
+    Vec2 pos;
+    Vec2 dir;
 };
 
 // Collision exceptions, e.g. Tiny Mode slipping through tiny gaps.
@@ -39,6 +63,7 @@ enum CollisionPass : unsigned {
 //   .  ground      #  hedge wall   T  tree     o  rock
 //   ~  water       =  bridge       ^  thorns   %  secret wall
 //   x  crate       X  boulder      :  tiny gap E  exit
+//   L  locked gate (opened with a key)
 // Entities (placed on ground):
 //   P  player spawn    c  coin          h  heart pickup
 //   s  slime           b  beetle (patrols left/right)
@@ -48,6 +73,11 @@ enum CollisionPass : unsigned {
 //   *  star (3 per level)  g  gem
 //   1-8  power-up: 1 speed shoes, 2 shield, 3 magnet, 4 super dash,
 //        5 double coins, 6 tiny, 7 giant, 8 rainbow star
+//   K  key         f  lost friend (rescue with Y)    S  sign (read with Y)
+// On water:
+//   R  raft moving left/right        V  raft moving up/down
+//
+// Connected groups of secret walls (%) each count as one secret.
 char tileToChar(Tile t);
 
 // Result of a collision move (see moveAndCollide).
@@ -66,7 +96,8 @@ public:
     // fills `error` if the map is malformed (ragged rows, unknown
     // characters, missing spawn or exit). Metadata (id, name, world) is left
     // empty for the caller to fill in.
-    static bool fromAscii(const std::vector<std::string>& rows, Level& out, std::string* error);
+    // `firstLine` > 0 makes errors quote file line numbers (row 1 = that line).
+    static bool fromAscii(const std::vector<std::string>& rows, Level& out, std::string* error, int firstLine = 0);
 
     int width() const { return width_; }
     int height() const { return height_; }
@@ -80,7 +111,8 @@ public:
 
     static bool isSolid(Tile t, unsigned pass = kPassNone) {
         if (t == Tile::TinyGap) return (pass & kPassTinyGaps) == 0;
-        return t == Tile::Wall || t == Tile::Tree || t == Tile::Rock || t == Tile::Crate || t == Tile::Boulder;
+        return t == Tile::Wall || t == Tile::Tree || t == Tile::Rock || t == Tile::Crate || t == Tile::Boulder ||
+               t == Tile::Lock;
     }
     // Can this tile be smashed? Crates by a dash or a giant, boulders only by a giant.
     static bool isBreakable(Tile t, bool giant) { return t == Tile::Crate || (giant && t == Tile::Boulder); }
@@ -106,11 +138,29 @@ public:
     std::vector<Vec2> stars;
     std::vector<Vec2> gems;
     std::vector<PowerUpSpawn> powerUps;
+    std::vector<Vec2> keys;
+    std::vector<Vec2> friends;
+    std::vector<SignSpawn> signs;
+    std::vector<RaftSpawn> rafts;
+
+    Objective objective = Objective::ReachExit;
+    int goal = 0;           // coins needed for Objective::Coins
+    float timeLimit = 0.0f; // seconds, 0 = no limit
+    std::string hint;       // banner subtitle; empty = generated from the objective
+
+    // Secret passages: each connected group of % tiles is one secret.
+    int secretCount() const { return secretCount_; }
+    // Group index of the secret wall at a tile, or -1.
+    int secretAt(int tx, int ty) const;
 
 private:
+    void groupSecrets();
+
     int width_ = 0;
     int height_ = 0;
     std::vector<Tile> tiles_;
+    std::vector<int16_t> secretGroups_;
+    int secretCount_ = 0;
 };
 
 // Moves `box` by `delta`, stopping at solid tiles. Axes are resolved

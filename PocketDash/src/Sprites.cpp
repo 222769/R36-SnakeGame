@@ -37,7 +37,8 @@ bool paletteColor(char c, SDL_Color& out) {
     case 'v': out = {100, 60, 150, 255}; return true;  // beetle shell shade
     case 'M': out = {250, 235, 210, 255}; return true; // mushroom stem
     case 'A': out = {80, 220, 200, 255}; return true;  // active checkpoint flag / gem
-    case 'O': out = {255, 150, 40, 255}; return true;  // orange (giant icon)
+    case 'O': out = {255, 150, 40, 255}; return true;  // orange (giant icon, beaks)
+    case 'D': out = {196, 136, 74, 255}; return true;  // light wood (signs)
     case '.': out = {0, 0, 0, 0}; return true;
     default: return false;
     }
@@ -276,6 +277,48 @@ const Art kMushroom = {
     "................",
 };
 
+// --- Lost friend: a little chick (16x16) ---------------------------------------
+
+const Art kFriend = {
+    "................",
+    "................",
+    "................",
+    "......KKKK......",
+    ".....KYYYYK.....",
+    "....KYYYYYYK....",
+    "....KYEYYEYK....",
+    "...KYYYOOYYYK...",
+    "...KYYYYYYYYK...",
+    "..KYYYYYYYYYYK..",
+    "..KYyYYYYYYyYK..",
+    "..KYYyyYYyyYYK..",
+    "...KYYYYYYYYK...",
+    "....KKOKKOKK....",
+    "......O..O......",
+    "................",
+};
+
+// --- Sign (16x16) -----------------------------------------------------------
+
+const Art kSign = {
+    "................",
+    "................",
+    ".KKKKKKKKKKKKKK.",
+    ".KDDDDDDDDDDDDK.",
+    ".KDKKKKKKKKKKDK.",
+    ".KDDDDDDDDDDDDK.",
+    ".KDKKKKKKKDDDDK.",
+    ".KDDDDDDDDDDDDK.",
+    ".KNNNNNNNNNNNNK.",
+    ".KKKKKKKKKKKKKK.",
+    "......KNNK......",
+    "......KNNK......",
+    "......KNNK......",
+    "......KNNK......",
+    ".....KKKKKK.....",
+    "................",
+};
+
 // --- Checkpoint flag (16x16); the unreached version is drawn in grey -----------
 
 const Art kCheckpoint = {
@@ -414,6 +457,21 @@ const Art kIconTiny = { // shrink arrow (Giant is this flipped, in orange)
     "............",
 };
 
+const Art kKey = {
+    "............",
+    "..KKKK......",
+    ".KYYYYK.....",
+    "KYYKKYYK....",
+    "KYK..KYKKKKK",
+    "KYK..KYYYYYK",
+    "KYYKKYYKyKyK",
+    ".KYYYYK.K.K.",
+    "..KKKK......",
+    "............",
+    "............",
+    "............",
+};
+
 struct NamedArt {
     const char* name;
     const Art* art;
@@ -439,6 +497,8 @@ const NamedArt kAllArt[] = {
     {"beetle1", &kBeetle1, Sprites::kEnemyFrame},
     {"mushroom", &kMushroom, Sprites::kEnemyFrame},
     {"checkpoint", &kCheckpoint, Sprites::kEnemyFrame},
+    {"friend", &kFriend, Sprites::kEnemyFrame},
+    {"sign", &kSign, Sprites::kEnemyFrame},
     {"star", &kStar, Sprites::kItemSize},
     {"gem", &kGem, Sprites::kItemSize},
     {"icon_speed", &kIconSpeed, Sprites::kItemSize},
@@ -447,6 +507,7 @@ const NamedArt kAllArt[] = {
     {"icon_superdash", &kIconSuperDash, Sprites::kItemSize},
     {"icon_double", &kIconDoubleCoins, Sprites::kItemSize},
     {"icon_tiny", &kIconTiny, Sprites::kItemSize},
+    {"key", &kKey, Sprites::kItemSize},
 };
 
 // `from`/`to` optionally swap one palette character (e.g. a grey variant).
@@ -578,18 +639,20 @@ bool Sprites::create(SDL_Renderer* renderer, const std::string& spriteDir) {
     if (!enemies_) {
         SurfacePtr sheet = makeSurface(kEnemyFrame * 2, kEnemyFrame * kEnemyRows);
         if (!sheet) return false;
-        const Art* frames[kEnemyRows][2] = {{&kSlime0, &kSlime1}, {&kBeetle0, &kBeetle1}, {&kMushroom, &kMushroom}};
+        const Art* frames[kEnemyRows][2] = {
+            {&kSlime0, &kSlime1}, {&kBeetle0, &kBeetle1}, {&kMushroom, &kMushroom}, {&kFriend, &kFriend}};
         for (int row = 0; row < kEnemyRows; ++row)
             for (int f = 0; f < 2; ++f) blitArt(sheet.get(), *frames[row][f], f * kEnemyFrame, row * kEnemyFrame);
         enemies_ = toTexture(renderer, sheet.get());
     }
 
-    checkpoint_ = loadOverride(renderer, spriteDir, "checkpoint", kEnemyFrame * 2, kEnemyFrame);
+    checkpoint_ = loadOverride(renderer, spriteDir, "props", kEnemyFrame * 3, kEnemyFrame);
     if (!checkpoint_) {
-        SurfacePtr sheet = makeSurface(kEnemyFrame * 2, kEnemyFrame);
+        SurfacePtr sheet = makeSurface(kEnemyFrame * 3, kEnemyFrame);
         if (!sheet) return false;
         blitArt(sheet.get(), kCheckpoint, 0, 0, 'A', 'g'); // frame 0: not reached yet
         blitArt(sheet.get(), kCheckpoint, kEnemyFrame, 0);  // frame 1: active
+        blitArt(sheet.get(), kSign, kEnemyFrame * 2, 0);    // frame 2: sign
         checkpoint_ = toTexture(renderer, sheet.get());
     }
 
@@ -611,6 +674,7 @@ bool Sprites::create(SDL_Renderer* renderer, const std::string& spriteDir) {
         const Art flipped(kIconTiny.rbegin(), kIconTiny.rend());
         blitArt(sheet.get(), flipped, at(itemFrame(PowerUpType::GiantMode)), 0, 'G', 'O');
         blitArt(sheet.get(), kStar, at(itemFrame(PowerUpType::RainbowStar)), 0); // white: tinted when drawn
+        blitArt(sheet.get(), kKey, at(kItemKey), 0);
         items_ = toTexture(renderer, sheet.get());
     }
 

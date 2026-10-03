@@ -36,6 +36,7 @@ public:
         kExit0, kExit1,
         kCrate, kBoulder,
         kTinyGap,                               // hedge with a little mouse-hole
+        kLock,                                  // wooden gate with a padlock
         kArtCount
     };
 

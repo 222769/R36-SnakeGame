@@ -35,7 +35,15 @@ enum SessionEvent : unsigned {
     kSessionShieldPop = 1u << 17,   // the shield bubble absorbed a hit
     kSessionBlockBroken = 1u << 18, // a crate/boulder was smashed (the level changed)
     kSessionNoRoom = 1u << 19,      // Giant Mode needs more space here
-    kSessionGoldenStar = 1u << 20,  // cleared with every star, coin and gem
+    kSessionGoldenStar = 1u << 20,  // cleared with everything found
+    kSessionKey = 1u << 21,         // picked up a key
+    kSessionGateOpened = 1u << 22,  // a key opened a gate (the level changed)
+    kSessionLocked = 1u << 23,      // bumped a gate without a key
+    kSessionRescue = 1u << 24,      // a lost friend was rescued
+    kSessionSign = 1u << 25,        // started reading a sign (see readingSign())
+    kSessionSecret = 1u << 26,      // walked into a secret passage for the first time
+    kSessionExitLocked = 1u << 27,  // touched the flag before finishing the objective
+    kSessionTimeUp = 1u << 28,      // the time limit ran out
 };
 
 struct SessionStats {
@@ -63,15 +71,22 @@ struct SessionStats {
 //  * One power-up at a time: a pickup goes into the slot and X uses it.
 //    While the slot is full, other power-ups stay on the ground for later.
 //  * Dashing smashes crates; Giant Mode smashes crates and boulders.
+//  * Keys open locked gates (one key per gate). Rafts carry you over water.
+//  * Y rescues lost friends and reads signs.
+//  * The exit flag only opens once the level's objective is complete.
+//  * A time limit (50% longer on Relaxed) ends in "time up" and a retry.
 //
 // The session works on its own copy of the level, because smashed blocks
 // change the map; restart() restores the original.
 class LevelSession {
 public:
-    enum class State { Playing, KnockedOut, Cleared };
+    enum class State { Playing, KnockedOut, Cleared, TimeUp };
 
     static constexpr float kKnockOutTime = 1.2f;
     static constexpr float kCheckpointRadius = 24.0f;
+    static constexpr float kInteractRadius = 40.0f;
+    static constexpr float kRaftSpeed = 50.0f;
+    static constexpr float kRaftHalfSize = 20.0f; // rafts are 40x40, generous to stand on
 
     LevelSession(const Level& level, Difficulty difficulty);
 
@@ -96,6 +111,39 @@ public:
     const ItemField& items() const { return items_; }
     const PowerUpState& powers() const { return powers_; }
     bool goldenStar() const { return goldenStar_; }
+
+    // --- Phase 5: objectives and level furniture ---------------------------
+    bool objectiveComplete() const;
+    // Progress for the HUD, e.g. friends 1 of 3. `need` is 0 for "reach exit".
+    void objectiveProgress(int& have, int& need) const;
+    // Effective time limit for this difficulty (0 = none) and time left.
+    float timeLimit() const;
+    float timeLeft() const;
+
+    int keysHeld() const { return keysHeld_; }
+    int secretsFound() const { return secretsFound_; }
+    int secretsTotal() const { return level_.secretCount(); }
+
+    struct Friend {
+        Vec2 pos;
+        bool rescued = false;
+        float rescueTime = 0.0f; // for the happy-hop-away animation
+    };
+    const std::vector<Friend>& friends() const { return friends_; }
+    int friendsRescued() const;
+
+    struct Raft {
+        Vec2 pos;
+        Vec2 dir;
+        RectF rect() const { return RectF{pos.x - kRaftHalfSize, pos.y - kRaftHalfSize, 2 * kRaftHalfSize, 2 * kRaftHalfSize}; }
+    };
+    const std::vector<Raft>& rafts() const { return rafts_; }
+
+    // What Y would interact with right now (for the on-screen prompt).
+    enum class InteractKind { None, Friend, Sign };
+    InteractKind interactTarget(Vec2* where = nullptr) const;
+    // Index of the sign just read (valid after kSessionSign).
+    int readingSign() const { return readingSign_; }
     const std::vector<Enemy>& enemies() const { return enemies_; }
     int enemiesAlive() const;
     const Effects& effects() const { return effects_; }
@@ -121,6 +169,12 @@ private:
     void updatePowerUps(bool usePressed, float dt, unsigned& events);
     bool tryActivate(PowerUpType type, unsigned& events);
     void smashBlocks(unsigned& events);
+    void updateRafts(float dt);
+    void updateLocksAndSecrets(unsigned& events);
+    void interact(unsigned& events);
+    bool onRaft() const;
+    int nearestFriend() const;
+    int nearestSign() const;
     PlayerModifiers modifiersFromPowers() const;
     bool invulnerable() const { return powers_.active(PowerUpType::RainbowStar); }
     bool crushesEnemies() const {
@@ -138,6 +192,14 @@ private:
     ItemField items_;
     PowerUpState powers_;
     bool goldenStar_ = false;
+    int keysHeld_ = 0;
+    bool lockHintLatch_ = false; // one "need a key" hint per bump
+    bool exitHintLatch_ = false; // one "not yet" hint per visit to the flag
+    std::vector<bool> secretFound_;
+    int secretsFound_ = 0;
+    std::vector<Friend> friends_;
+    std::vector<Raft> rafts_;
+    int readingSign_ = -1;
     std::vector<Enemy> enemies_;
     std::vector<Checkpoint> checkpoints_;
     int activeCheckpoint_ = -1;

@@ -21,6 +21,7 @@ struct GameOptions {
     bool softwareRenderer = false;
     bool smokeTest = false;     // scripted headless run with assertions
     bool skipTitle = false;     // start straight in gameplay
+    std::string startLevel;     // level the title screen starts ("" = 1-1, "test" = built-in meadow)
     std::string difficulty;     // overrides (and saves) the difficulty setting
     int maxFrames = 0;          // quit after N frames (0 = run forever)
     std::string screenshotPath; // save the final frame as PNG
@@ -52,6 +53,8 @@ public:
     void quit() { running_ = false; }
 
     bool debugEnabled() const { return debug_; }
+    // Level that "press A" on the title screen starts.
+    const std::string& startLevel() const { return startLevel_; }
     // Seconds of simulated time since start (stops while minimised).
     double time() const { return simTime_; }
 
@@ -85,6 +88,7 @@ private:
     std::unique_ptr<Scene> scene_;
     std::unique_ptr<Scene> pendingScene_;
 
+    std::string startLevel_ = "1-1";
     bool running_ = true;
     bool debug_ = false;
     bool vsync_ = false;

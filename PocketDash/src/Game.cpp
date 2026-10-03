@@ -74,8 +74,12 @@ Game::Game(const GameOptions& options) : options_(options) {
         throw std::runtime_error("Failed to create sprites");
 
     // The smoke test starts on the title screen so it also covers that scene.
+    // The smoke test's script is written for the built-in test meadow.
+    if (options_.smokeTest) startLevel_ = "test";
+    else if (!options_.startLevel.empty()) startLevel_ = options_.startLevel;
+
     if (options_.skipTitle && !options_.smokeTest)
-        scene_ = std::make_unique<PlayScene>(*this);
+        scene_ = std::make_unique<PlayScene>(*this, startLevel_);
     else
         scene_ = std::make_unique<TitleScene>(*this);
 }

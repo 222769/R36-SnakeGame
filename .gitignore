@@ -16,3 +16,6 @@ log.txt
 *.swp
 .DS_Store
 Thumbs.db
+
+# Python bytecode from the level tools
+__pycache__/

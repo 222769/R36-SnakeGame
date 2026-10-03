@@ -6,6 +6,7 @@
 #include "Effects.h"
 #include "Enemy.h"
 #include "InputManager.h"
+#include "LevelLoader.h"
 #include "LevelSession.h"
 #include "Level.h"
 #include "Player.h"
@@ -1140,6 +1141,274 @@ void testRainbowStar() {
     CHECK(s.state() == LevelSession::State::Cleared);
 }
 
+// --- Phase 5: level files, objectives, rafts, keys, friends, signs ------------
+
+void testLevelFileParsing() {
+    Level level;
+    std::string error;
+    const char* good =
+        "# a comment\n"
+        "id=9-9\n"
+        "name=TEST\n"
+        "objective=coins\n"
+        "goal=2\n"
+        "time_limit=30\n"
+        "[map]\n"
+        "#######\n"
+        "#PccS.E\n"
+        "#######\n"
+        "[signs]\n"
+        "HELLO THERE\n";
+    CHECK(levels::parse(good, level, &error));
+    CHECK(level.id == "9-9" && level.name == "TEST");
+    CHECK(level.objective == Objective::Coins && level.goal == 2);
+    CHECK(level.timeLimit == 30.0f);
+    CHECK(level.signs.size() == 1 && level.signs[0].text == "HELLO THERE");
+
+    auto fails = [&](const char* text, const char* expect) {
+        Level l;
+        std::string e;
+        const bool ok = levels::parse(text, l, &e);
+        if (ok || e.find(expect) == std::string::npos) std::printf("  got: %s\n", e.c_str());
+        return !ok && e.find(expect) != std::string::npos;
+    };
+    CHECK(fails("id=x\ncolour=red\n[map]\nP.E\n", "line 2: unknown key 'colour'"));
+    CHECK(fails("id=x\nobjective=dance\n[map]\nP.E\n", "unknown objective"));
+    CHECK(fails("id=x\n[map]\nP.E\nP.?\n", "line 4"));                     // map errors quote file lines
+    CHECK(fails("id=x\n[map]\nPSE\n", "1 sign(s) but [signs] lists 0"));
+    CHECK(fails("id=x\nobjective=coins\ngoal=5\n[map]\nPcE\n", "goal=1..1"));
+    CHECK(fails("id=x\nobjective=rescue\n[map]\nP.E\n", "no friends"));
+    CHECK(fails("name=x\n[map]\nP.E\n", "missing id"));
+    CHECK(fails("id=x\n", "missing [map]"));
+
+    CHECK(levels::nextLevelId("1-1") == "1-2");
+    CHECK(levels::nextLevelId("1-8").empty());
+    CHECK(levels::worldLevelIds(1).size() == 8);
+}
+
+// Tile flood fill shared by the shipped-level checks: walking, hops/dashes
+// over 1-2 danger tiles (1-4 with Super Dash), raft tracks, and the
+// crate/boulder/tiny-gap/lock abilities the level provides.
+std::set<std::pair<int, int>> reachableTiles(const Level& level) {
+    bool tiny = false, giant = false, superDash = false;
+    for (const PowerUpSpawn& p : level.powerUps) {
+        tiny |= p.type == PowerUpType::TinyMode;
+        giant |= p.type == PowerUpType::GiantMode;
+        superDash |= p.type == PowerUpType::SuperDash;
+    }
+    const bool key = !level.keys.empty();
+    const int maxGap = superDash ? 4 : 2;
+
+    std::set<std::pair<int, int>> raft;
+    for (const RaftSpawn& r : level.rafts) {
+        const int rx = static_cast<int>(r.pos.x) / 32;
+        const int ry = static_cast<int>(r.pos.y) / 32;
+        const int dx = static_cast<int>(r.dir.x);
+        const int dy = static_cast<int>(r.dir.y);
+        for (int sgn : {1, -1})
+            for (int x = rx, y = ry; level.tileAt(x, y) == Tile::Water; x += dx * sgn, y += dy * sgn)
+                raft.insert({x, y});
+    }
+    auto standable = [&](int x, int y) {
+        if (!level.inBounds(x, y)) return false;
+        if (raft.count({x, y})) return true;
+        const Tile t = level.tileAt(x, y);
+        if (Level::isDanger(t)) return false;
+        if (t == Tile::Crate) return true;
+        if (t == Tile::Boulder) return giant;
+        if (t == Tile::Lock) return key;
+        return !Level::isSolid(t, tiny ? kPassTinyGaps : kPassNone);
+    };
+    auto danger = [&](int x, int y) {
+        return level.inBounds(x, y) && Level::isDanger(level.tileAt(x, y)) && !raft.count({x, y});
+    };
+
+    const std::pair<int, int> start{static_cast<int>(level.spawn.x) / 32, static_cast<int>(level.spawn.y) / 32};
+    std::set<std::pair<int, int>> seen{start};
+    std::vector<std::pair<int, int>> stack{start};
+    while (!stack.empty()) {
+        const auto [x, y] = stack.back();
+        stack.pop_back();
+        const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (const auto& d : dirs) {
+            for (int n = 0; n <= maxGap; ++n) {
+                bool gapOk = true;
+                for (int k = 1; k <= n; ++k) gapOk &= danger(x + d[0] * k, y + d[1] * k);
+                if (!gapOk) break;
+                const int tx = x + d[0] * (n + 1);
+                const int ty = y + d[1] * (n + 1);
+                if (standable(tx, ty)) {
+                    if (seen.insert({tx, ty}).second) stack.push_back({tx, ty});
+                    break;
+                }
+            }
+        }
+    }
+    return seen;
+}
+
+void testShippedLevels() {
+    for (const std::string& id : levels::worldLevelIds(1)) {
+        Level level;
+        std::string error;
+        const std::string path = std::string(POCKETDASH_SOURCE_DIR) + "/assets/levels/" + id + ".lvl";
+        const bool ok = levels::loadFile(path, level, &error);
+        if (!ok) std::printf("  %s\n", error.c_str());
+        CHECK(ok);
+        if (!ok) continue;
+        CHECK(level.id == id);
+        CHECK(level.stars.size() == 3);
+        CHECK(!level.overlapsSolid(Player(level.spawn).hitbox()));
+
+        const auto seen = reachableTiles(level);
+        auto tileOf = [](Vec2 p) { return std::make_pair(static_cast<int>(p.x) / 32, static_cast<int>(p.y) / 32); };
+        std::vector<Vec2> must = level.coins;
+        auto add = [&](const std::vector<Vec2>& v) { must.insert(must.end(), v.begin(), v.end()); };
+        add(level.stars);
+        add(level.gems);
+        add(level.hearts);
+        add(level.keys);
+        add(level.friends);
+        for (const PowerUpSpawn& p : level.powerUps) must.push_back(p.pos);
+        for (const CheckpointSpawn& c : level.checkpoints) must.push_back(c.pos);
+        for (const SignSpawn& sgn : level.signs) must.push_back(sgn.pos);
+        must.push_back(level.exit);
+        int unreachable = 0;
+        for (const Vec2& p : must) {
+            if (!seen.count(tileOf(p))) {
+                ++unreachable;
+                std::printf("  %s: unreachable at tile (%d,%d)\n", id.c_str(), tileOf(p).first, tileOf(p).second);
+            }
+        }
+        CHECK(unreachable == 0);
+        for (const SignSpawn& sgn : level.signs) CHECK(!sgn.text.empty());
+    }
+}
+
+void testRaftCarriesAcrossWater() {
+    const Level level = parseOrDie({
+        "#########",
+        "#P.R~~.E#",
+        "#########",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    // The raft shuttles from the start; walking straight into the water is a splash.
+    walkRightTo(s, 86.0f); // wait on the bank (tile 2 ends at x = 96)
+    int guard = 0;
+    while (!(s.rafts()[0].pos.x < 116.0f && s.rafts()[0].dir.x > 0.0f) && guard++ < 600) stepWith(s, {});
+    CHECK(guard < 600); // it came back to our bank
+    // Hop on and ride.
+    walkRightTo(s, 104.0f);
+    unsigned ev = 0;
+    for (int i = 0; i < 70; ++i) ev |= stepWith(s, {});
+    CHECK((ev & kSessionSplash) == 0); // riding, not swimming
+    CHECK(s.player().position().x > 150.0f); // carried towards the far bank
+    CHECK(s.hearts() == 3);
+    run(s, {1.0f, 0.0f}, 90);
+    CHECK(s.state() == LevelSession::State::Cleared);
+}
+
+void testKeysOpenGates() {
+    const Level level = parseOrDie({
+        "##########",
+        "#PK..L.E.#",
+        "##########",
+    });
+    // Without the key the gate stays shut (and says so).
+    const Level noKey = parseOrDie({
+        "##########",
+        "#P...L.E.#",
+        "##########",
+    });
+    LevelSession shut(noKey, Difficulty::Normal);
+    const unsigned sev = run(shut, {1.0f, 0.0f}, 90);
+    CHECK(sev & kSessionLocked);
+    CHECK(shut.level().tileAt(5, 1) == Tile::Lock);
+
+    LevelSession s(level, Difficulty::Normal);
+    const unsigned ev = run(s, {1.0f, 0.0f}, 150);
+    CHECK(ev & kSessionKey);
+    CHECK(ev & kSessionGateOpened);
+    CHECK(s.keysHeld() == 0);
+    CHECK(s.level().tileAt(5, 1) == Tile::Ground);
+    CHECK(s.state() == LevelSession::State::Cleared);
+}
+
+void testRescueObjectiveLocksExit() {
+    Level level;
+    std::string error;
+    CHECK(levels::parse("id=t\nobjective=rescue\n[map]\n#######\n#P.f.E#\n#######\n", level, &error));
+    LevelSession s(level, Difficulty::Normal);
+    CHECK(!s.objectiveComplete());
+    // Walk straight to the flag: it's locked until the friend is rescued.
+    unsigned ev = run(s, {1.0f, 0.0f}, 90);
+    CHECK(ev & kSessionExitLocked);
+    CHECK(s.state() == LevelSession::State::Playing);
+    // Go back, rescue with Y, return.
+    int guard = 0;
+    while (s.player().position().x > 112.0f && guard++ < 300) stepWith(s, {-1.0f, 0.0f});
+    run(s, {}, 10);
+    CHECK(s.interactTarget() == LevelSession::InteractKind::Friend);
+    PlayerInput y;
+    y.interactPressed = true;
+    ev = s.update(y, kDt);
+    CHECK(ev & kSessionRescue);
+    CHECK(s.friendsRescued() == 1);
+    CHECK(s.objectiveComplete());
+    run(s, {1.0f, 0.0f}, 90);
+    CHECK(s.state() == LevelSession::State::Cleared);
+}
+
+void testSignsAndSecrets() {
+    Level level;
+    std::string error;
+    CHECK(levels::parse("id=t\n[map]\n#########\n#PS.%%.E#\n#########\n[signs]\nHI!\n", level, &error));
+    CHECK(level.secretCount() == 1); // two adjacent % tiles = one secret
+    LevelSession s(level, Difficulty::Normal);
+    CHECK(s.interactTarget() == LevelSession::InteractKind::Sign);
+    PlayerInput y;
+    y.interactPressed = true;
+    const unsigned ev = s.update(y, kDt);
+    CHECK(ev & kSessionSign);
+    CHECK(s.readingSign() == 0);
+    const unsigned walk = run(s, {1.0f, 0.0f}, 120);
+    CHECK(walk & kSessionSecret);
+    CHECK(s.secretsFound() == 1);
+    CHECK(s.state() == LevelSession::State::Cleared);
+    CHECK(s.goldenStar()); // no stars/coins here, but the secret was found
+}
+
+void testTimeLimit() {
+    Level level;
+    std::string error;
+    CHECK(levels::parse("id=t\ntime_limit=2\n[map]\n#####\n#P.E#\n#####\n", level, &error));
+    LevelSession s(level, Difficulty::Normal);
+    CHECK_NEAR(s.timeLimit(), 2.0f, 0.001f);
+    const unsigned ev = run(s, {}, 60 * 2 + 5);
+    CHECK(ev & kSessionTimeUp);
+    CHECK(s.state() == LevelSession::State::TimeUp);
+    s.restart();
+    CHECK(s.state() == LevelSession::State::Playing);
+
+    LevelSession relaxed(level, Difficulty::Relaxed);
+    CHECK_NEAR(relaxed.timeLimit(), 3.0f, 0.001f); // 50% extra on Relaxed
+}
+
+void testCoinObjective() {
+    Level level;
+    std::string error;
+    CHECK(levels::parse("id=t\nobjective=coins\ngoal=2\n[map]\n#########\n#P.E.cc.#\n#########\n", level, &error));
+    LevelSession s(level, Difficulty::Normal);
+    unsigned ev = run(s, {1.0f, 0.0f}, 30); // over the flag first: locked
+    CHECK(ev & kSessionExitLocked);
+    run(s, {1.0f, 0.0f}, 60); // collect both coins
+    int have = 0, need = 0;
+    s.objectiveProgress(have, need);
+    CHECK(have == 2 && need == 2);
+    run(s, {-1.0f, 0.0f}, 120);
+    CHECK(s.state() == LevelSession::State::Cleared);
+}
+
 } // namespace
 
 int main(int, char*[]) {
@@ -1187,6 +1456,14 @@ int main(int, char*[]) {
         {"giant smashes and crushes", testGiantSmashesAndCrushes},
         {"dash smashes crates", testDashSmashesCrates},
         {"rainbow star", testRainbowStar},
+        {"level file parsing", testLevelFileParsing},
+        {"shipped world 1 levels", testShippedLevels},
+        {"raft", testRaftCarriesAcrossWater},
+        {"keys and gates", testKeysOpenGates},
+        {"rescue objective", testRescueObjectiveLocksExit},
+        {"signs and secrets", testSignsAndSecrets},
+        {"time limit", testTimeLimit},
+        {"coin objective", testCoinObjective},
     };
     for (const auto& [name, fn] : tests) {
         const int before = g_failures;

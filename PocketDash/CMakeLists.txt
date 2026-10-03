@@ -55,6 +55,7 @@ set(POCKETDASH_CORE_SOURCES
     src/Game.cpp
     src/InputManager.cpp
     src/Level.cpp
+    src/LevelLoader.cpp
     src/LevelSession.cpp
     src/Platform.cpp
     src/Player.cpp
@@ -108,11 +109,17 @@ if(POCKETDASH_BUILD_TESTS)
     enable_testing()
     add_executable(pocketdash_tests tests/test_main.cpp)
     target_link_libraries(pocketdash_tests PRIVATE pocketdash_core)
+    # Lets the tests find assets/levels/*.lvl in the source tree.
+    target_compile_definitions(pocketdash_tests PRIVATE POCKETDASH_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     if(TARGET SDL2::SDL2main)
         target_link_libraries(pocketdash_tests PRIVATE SDL2::SDL2main)
     endif()
 
     add_test(NAME unit_tests COMMAND pocketdash_tests)
+
+    # Loads every shipped level through the runtime data path.
+    add_test(NAME level_files COMMAND pocketdash --check-levels)
+    set_tests_properties(level_files PROPERTIES ENVIRONMENT "POCKETDASH_DATA=${CMAKE_CURRENT_SOURCE_DIR}")
 
     # Runs the real game loop headless with scripted input.
     add_test(NAME smoke_test COMMAND pocketdash --smoke-test)

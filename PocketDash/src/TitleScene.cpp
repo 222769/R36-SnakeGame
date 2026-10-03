@@ -64,7 +64,7 @@ void TitleScene::update(float dt) {
     InputManager& in = game_.input();
     if (in.pressed(Action::A) || in.pressed(Action::Start)) {
         game_.audio().play(Sfx::MenuSelect);
-        game_.changeScene(std::make_unique<PlayScene>(game_));
+        game_.changeScene(std::make_unique<PlayScene>(game_, game_.startLevel()));
     }
 }
 

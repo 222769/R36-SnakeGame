@@ -25,7 +25,7 @@ Sound effects (`.wav` or `.ogg`):
 | break              | a crate or boulder is smashed  |
 | shield_pop         | the shield bubble absorbs a hit|
 | powerup_use        | a power-up is activated (X)    |
-| denied             | no room to activate Giant Mode |
+| denied             | not allowed: no room for Giant, locked gate, flag not open yet |
 
 Music (`.ogg`, `.mp3` or `.wav`, looped): `title`, `meadow`, `boss`.
 

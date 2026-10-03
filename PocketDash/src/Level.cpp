@@ -24,6 +24,11 @@ bool charToTile(char c, Tile& out) {
     case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8':
         out = Tile::Ground;
         return true;
+    case 'K': case 'f': case 'S':
+        out = Tile::Ground;
+        return true;
+    case 'R': case 'V': out = Tile::Water; return true; // rafts float on water
+    case 'L': out = Tile::Lock; return true;
     case 'x': out = Tile::Crate; return true;
     case 'X': out = Tile::Boulder; return true;
     case ':': out = Tile::TinyGap; return true;
@@ -106,6 +111,7 @@ char tileToChar(Tile t) {
     case Tile::Crate: return 'x';
     case Tile::Boulder: return 'X';
     case Tile::TinyGap: return ':';
+    case Tile::Lock: return 'L';
     }
     return '?';
 }
@@ -113,7 +119,32 @@ char tileToChar(Tile t) {
 Level::Level(int width, int height)
     : width_(width), height_(height), tiles_(static_cast<size_t>(width * height), Tile::Ground) {}
 
-bool Level::fromAscii(const std::vector<std::string>& rows, Level& out, std::string* error) {
+const char* objectiveName(Objective o) {
+    switch (o) {
+    case Objective::ReachExit: return "exit";
+    case Objective::Coins: return "coins";
+    case Objective::Stars: return "stars";
+    case Objective::Rescue: return "rescue";
+    case Objective::DefeatAll: return "defeat";
+    }
+    return "exit";
+}
+
+bool objectiveFromName(const std::string& s, Objective& out) {
+    for (Objective o : {Objective::ReachExit, Objective::Coins, Objective::Stars, Objective::Rescue,
+                        Objective::DefeatAll}) {
+        if (s == objectiveName(o)) {
+            out = o;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Level::fromAscii(const std::vector<std::string>& rows, Level& out, std::string* error, int firstLine) {
+    auto where = [&](int row) {
+        return firstLine > 0 ? "line " + std::to_string(firstLine + row) : "map row " + std::to_string(row + 1);
+    };
     auto fail = [&](const std::string& msg) {
         if (error) *error = msg;
         return false;
@@ -128,14 +159,14 @@ bool Level::fromAscii(const std::vector<std::string>& rows, Level& out, std::str
 
     for (int y = 0; y < height; ++y) {
         if (static_cast<int>(rows[y].size()) != width)
-            return fail("map row " + std::to_string(y + 1) + " is " + std::to_string(rows[y].size()) +
-                        " wide, expected " + std::to_string(width));
+            return fail(where(y) + ": map row is " + std::to_string(rows[y].size()) + " wide, expected " +
+                        std::to_string(width));
         for (int x = 0; x < width; ++x) {
             const char c = rows[y][x];
             Tile t;
             if (!charToTile(c, t))
-                return fail(std::string("unknown map character '") + c + "' at row " + std::to_string(y + 1) +
-                            ", column " + std::to_string(x + 1));
+                return fail(where(y) + ": unknown map character '" + std::string(1, c) + "' at column " +
+                            std::to_string(x + 1));
             level.setTile(x, y, t);
             if (c == 'P') {
                 // Player position is the feet: put them in the lower half of the tile.
@@ -165,14 +196,61 @@ bool Level::fromAscii(const std::vector<std::string>& rows, Level& out, std::str
                 level.gems.push_back(tileCenter(x, y));
             } else if (c >= '1' && c <= '8') {
                 level.powerUps.push_back({static_cast<PowerUpType>(c - '0'), tileCenter(x, y)});
+            } else if (c == 'K') {
+                level.keys.push_back(tileCenter(x, y));
+            } else if (c == 'f') {
+                level.friends.push_back(tileCenter(x, y) + Vec2{0.0f, 6.0f});
+            } else if (c == 'S') {
+                level.signs.push_back({tileCenter(x, y) + Vec2{0.0f, 6.0f}, std::string()});
+            } else if (c == 'R' || c == 'V') {
+                level.rafts.push_back({tileCenter(x, y), c == 'R' ? Vec2{1.0f, 0.0f} : Vec2{0.0f, 1.0f}});
             }
         }
     }
     if (spawns != 1) return fail("map needs exactly one player spawn 'P' (found " + std::to_string(spawns) + ")");
     if (exits < 1) return fail("map needs an exit 'E'");
 
+    level.groupSecrets();
     out = std::move(level);
     return true;
+}
+
+void Level::groupSecrets() {
+    // Flood-fill connected (4-way) secret walls into numbered groups.
+    secretGroups_.assign(tiles_.size(), -1);
+    secretCount_ = 0;
+    std::vector<int> stack;
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            const size_t i = static_cast<size_t>(y * width_ + x);
+            if (tiles_[i] != Tile::SecretWall || secretGroups_[i] >= 0) continue;
+            const int16_t group = static_cast<int16_t>(secretCount_++);
+            stack.assign(1, static_cast<int>(i));
+            secretGroups_[i] = group;
+            while (!stack.empty()) {
+                const int cur = stack.back();
+                stack.pop_back();
+                const int cx = cur % width_;
+                const int cy = cur / width_;
+                const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (const auto& d : dirs) {
+                    const int nx = cx + d[0];
+                    const int ny = cy + d[1];
+                    if (!inBounds(nx, ny)) continue;
+                    const size_t n = static_cast<size_t>(ny * width_ + nx);
+                    if (tiles_[n] == Tile::SecretWall && secretGroups_[n] < 0) {
+                        secretGroups_[n] = group;
+                        stack.push_back(static_cast<int>(n));
+                    }
+                }
+            }
+        }
+    }
+}
+
+int Level::secretAt(int tx, int ty) const {
+    if (!inBounds(tx, ty) || secretGroups_.empty()) return -1;
+    return secretGroups_[static_cast<size_t>(ty * width_ + tx)];
 }
 
 float Level::pixelWidth() const { return static_cast<float>(width_ * kTileSize); }
