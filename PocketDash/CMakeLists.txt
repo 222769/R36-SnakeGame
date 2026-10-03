@@ -47,6 +47,7 @@ endif()
 set(POCKETDASH_CORE_SOURCES
     src/AudioManager.cpp
     src/Backdrop.cpp
+    src/Boss.cpp
     src/BuiltinLevels.cpp
     src/Canvas.cpp
     src/Camera.cpp

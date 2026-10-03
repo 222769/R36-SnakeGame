@@ -359,6 +359,100 @@ void paintBeetle(Canvas& c, int frame) {
     c.fillCircle(17.0f, 19.5f, 1.6f, shell.scaled(0.6f));
 }
 
+// The Meadow Guardian, painted in a 112x112 frame. `frame` is a
+// Sprites::BossFrame: idle, crouch, leap, dazed, calm.
+void paintBoss(Canvas& c, int frame) {
+    const float W = static_cast<float>(c.width());
+    const float k = W / 112.0f;
+    const bool crouch = frame == 1, leap = frame == 2, dazed = frame == 3, calm = frame == 4;
+    const float sy = crouch ? 0.82f : leap ? 1.06f : 1.0f; // body squash
+    const float base = 104.0f;                              // feet line
+    auto Y = [&](float y) { return (base - (base - y) * sy) * k; };
+    auto X = [&](float x) { return x * k; };
+    const Col moss = Col::rgb(92, 146, 72);
+    const Col mossDark = Col::rgb(58, 104, 52);
+    const Col belly = Col::rgb(196, 206, 140);
+    const Col bark = Col::rgb(104, 72, 48);
+
+    c.softEllipse(X(56), Y(104), X(44), X(9), Col::rgb(20, 40, 20, 90));
+    // Feet (tucked up mid-leap).
+    const float footY = leap ? 96.0f : 101.0f;
+    c.sphere(X(36), Y(footY), X(13), X(8), bark, 0.2f);
+    c.sphere(X(76), Y(footY), X(13), X(8), bark, 0.2f);
+    // Arms: down normally, raised when leaping, drooping when dizzy.
+    const float armY = leap ? 40.0f : dazed ? 82.0f : 70.0f;
+    c.sphere(X(12), Y(armY), X(10), X(13) * sy, mossDark, 0.15f);
+    c.sphere(X(100), Y(armY), X(10), X(13) * sy, mossDark, 0.15f);
+    // Body and belly.
+    c.sphere(X(56), Y(64), X(46), X(41) * sy, moss, 0.18f, 0.55f);
+    c.fillEllipse(X(56), Y(80), X(27), X(18) * sy, belly);
+    c.softEllipse(X(50), Y(74), X(14), X(7) * sy, Col::rgb(255, 255, 240, 90));
+    // Moss tufts.
+    for (int i = 0; i < 6; ++i) {
+        const float a = 3.6f + static_cast<float>(i) * 0.42f;
+        c.sphere(X(56 + std::cos(a) * 40.0f), Y(64 + std::sin(a) * 34.0f), X(7), X(6), moss.scaled(1.12f), 0.1f, 0.6f);
+    }
+    // Leaf crown and a big flower on top.
+    for (int i = 0; i < 7; ++i) {
+        const float a = 3.4f + static_cast<float>(i) * 0.43f;
+        const float lx = 56 + std::cos(a) * 30.0f, ly = 30 + std::sin(a) * 16.0f;
+        c.sphere(X(lx), Y(ly), X(9), X(6), (i % 2 ? Col::rgb(70, 150, 60) : Col::rgb(110, 176, 70)), 0.25f, 0.6f);
+    }
+    const Col petal = calm ? Col::rgb(250, 190, 210) : Col::rgb(236, 120, 156);
+    for (int i = 0; i < 6; ++i) {
+        const float a = static_cast<float>(i) * 1.047f;
+        c.sphere(X(56 + std::cos(a) * 8.0f), Y(18 + std::sin(a) * 6.0f), X(6.5f), X(5), petal, 0.3f, 0.65f);
+    }
+    c.sphere(X(56), Y(18), X(5), X(4), Col::rgb(248, 206, 70), 0.4f, 0.7f);
+
+    // Face.
+    const float eyeY = 54.0f;
+    const Col ink = Col::rgb(36, 30, 40);
+    if (calm) {
+        // Happy closed eyes, blush and a smile.
+        for (float ex : {40.0f, 72.0f}) {
+            for (int i = 0; i < 6; ++i) {
+                const float a0 = 3.4f + i * 0.45f, a1 = a0 + 0.45f;
+                c.line({X(ex + std::cos(a0) * 8), Y(eyeY + 2 + std::sin(a0) * 6)},
+                       {X(ex + std::cos(a1) * 8), Y(eyeY + 2 + std::sin(a1) * 6)}, X(2.6f), ink);
+            }
+            c.softEllipse(X(ex + (ex < 56 ? -6 : 6)), Y(eyeY + 12), X(8), X(4), Col::rgb(240, 120, 140, 150));
+        }
+        for (int i = 0; i < 6; ++i) {
+            const float a0 = 0.5f + i * 0.36f, a1 = a0 + 0.36f;
+            c.line({X(56 + std::cos(a0) * 12), Y(66 + std::sin(a0) * 7)}, {X(56 + std::cos(a1) * 12), Y(66 + std::sin(a1) * 7)},
+                   X(2.8f), ink);
+        }
+        return;
+    }
+    for (float ex : {40.0f, 72.0f}) {
+        c.fillEllipse(X(ex), Y(eyeY), X(10), X(11) * sy, Col::rgb(252, 250, 240));
+        if (dazed) {
+            c.ring(X(ex), Y(eyeY), X(3.0f), X(4.6f), ink);
+            c.ring(X(ex), Y(eyeY), X(6.4f), X(8.0f), ink);
+        } else {
+            const float look = leap ? -3.0f : 2.0f;
+            c.fillEllipse(X(ex + (ex < 56 ? 2.0f : -2.0f)), Y(eyeY + look), X(5), X(6) * sy, ink);
+            c.fillCircle(X(ex + (ex < 56 ? 0.5f : -3.5f)), Y(eyeY + look - 2.5f), X(1.8f), Col::rgb(255, 255, 255));
+        }
+    }
+    if (!dazed) {
+        // Stern brows (lower when crouching, ready to spring).
+        const float by = crouch ? 41.0f : 39.0f;
+        c.line({X(30), Y(by - 4)}, {X(49), Y(by + 2)}, X(4.0f), mossDark.scaled(0.6f));
+        c.line({X(82), Y(by - 4)}, {X(63), Y(by + 2)}, X(4.0f), mossDark.scaled(0.6f));
+    }
+    if (leap) {
+        c.fillEllipse(X(56), Y(72), X(8), X(9), Col::rgb(90, 40, 40));
+    } else if (dazed) {
+        for (int i = 0; i < 4; ++i)
+            c.line({X(46 + i * 5.0f), Y(70 + (i % 2) * 3.0f)}, {X(51 + i * 5.0f), Y(70 + ((i + 1) % 2) * 3.0f)}, X(2.6f), ink);
+    } else {
+        c.line({X(47), Y(71)}, {X(56), Y(68)}, X(3.0f), ink);
+        c.line({X(56), Y(68)}, {X(65), Y(71)}, X(3.0f), ink);
+    }
+}
+
 void paintMushroom(Canvas& c) {
     const Col stem = Col::rgb(240, 226, 200);
     c.fillRoundRect(10.0f, 15.0f, 12.0f, 15.0f, 5.0f, stem.scaled(0.8f));
@@ -464,6 +558,7 @@ std::vector<std::pair<const char*, Painter>> allPainters() {
     for (int f = 0; f < 3; ++f)
         for (int fr = 0; fr < 2; ++fr) v.push_back({"hero", [f, fr](Canvas& c) { paintHero(c, 0, 0, 1.0f, f, fr); }});
     v.push_back({"heart", [](Canvas& c) { paintHeart(c, true); }});
+    for (int f = 0; f < Sprites::kBossFrames; ++f) v.push_back({"boss", [f](Canvas& c) { paintBoss(c, f); }});
     v.push_back({"heart_empty", [](Canvas& c) { paintHeart(c, false); }});
     for (float s : {1.0f, 0.55f, 0.1f}) v.push_back({"coin", [s](Canvas& c) { paintCoin(c, s); }});
     v.push_back({"star", [](Canvas& c) { paintStar(c, kGold, kGoldDark, true); }});
@@ -604,6 +699,15 @@ bool Sprites::create(SDL_Renderer* renderer, const std::string& spriteDir) {
         checkpoint_ = toTexture(renderer, sheet.get());
     }
 
+    boss_ = loadOverride(renderer, spriteDir, "boss", kBossFrame * kBossFrames, kBossFrame);
+    if (!boss_) {
+        SurfacePtr sheet = makeSurface(kBossFrame * kBossFrames, kBossFrame);
+        if (!sheet) return false;
+        for (int f = 0; f < kBossFrames; ++f)
+            cell(sheet.get(), f * kBossFrame, 0, kBossFrame, kBossFrame, [f](Canvas& c) { paintBoss(c, f); });
+        boss_ = toTexture(renderer, sheet.get());
+    }
+
     items_ = loadOverride(renderer, spriteDir, "items", kItemSize * kItemFrames, kItemSize);
     if (!items_) {
         SurfacePtr sheet = makeSurface(kItemSize * kItemFrames, kItemSize);
@@ -618,7 +722,7 @@ bool Sprites::create(SDL_Renderer* renderer, const std::string& spriteDir) {
     }
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
-    const bool ok = player_ && heroLarge_ && outfitPreviews_ && heartFull_ && heartEmpty_ && coin_ && enemies_ && checkpoint_ && items_;
+    const bool ok = player_ && heroLarge_ && outfitPreviews_ && heartFull_ && heartEmpty_ && coin_ && enemies_ && checkpoint_ && boss_ && items_;
     if (!ok) SDL_Log("[sprites] Failed to create sprites: %s", SDL_GetError());
     return ok;
 }

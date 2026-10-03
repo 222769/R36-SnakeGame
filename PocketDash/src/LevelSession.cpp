@@ -59,6 +59,7 @@ void LevelSession::restart() {
     enemies_.clear();
     enemies_.reserve(level_.enemies.size());
     for (const EnemySpawn& s : level_.enemies) enemies_.emplace_back(s);
+    if (level_.hasBoss) boss_.reset(level_.bossSpawn, level_.bossArena);
 
     checkpoints_.clear();
     for (const CheckpointSpawn& c : level_.checkpoints)
@@ -107,6 +108,11 @@ unsigned LevelSession::update(const PlayerInput& input, float dt) {
         effects_.update(dt);
         if (stateTime_ >= kKnockOutTime) {
             hearts_ = rules_.maxHearts;
+            if (level_.hasBoss && boss_.fighting()) {
+                // The boss naps again (keeping its injuries) and the gates open.
+                boss_.sleep();
+                setArenaGates(false);
+            }
             player_.respawnAt(respawnPoint());
             lastSafe_ = respawnPoint();
             state_ = State::Playing;
@@ -137,6 +143,7 @@ unsigned LevelSession::update(const PlayerInput& input, float dt) {
     smashBlocks(events);
     updateLocksAndSecrets(events);
     updateEnemies(dt, events);
+    if (level_.hasBoss) updateBoss(dt, events);
     if (state_ == State::Playing) updateHazards(events);
     if (state_ == State::Playing) updatePickups(dt, events);
 
@@ -192,6 +199,75 @@ void LevelSession::updateEnemies(float dt, unsigned& events) {
         } else if (e.dangerous() && player_.height() < kClearHeight) {
             hurt(e.position(), events);
         }
+    }
+}
+
+bool LevelSession::debugDefeatBoss() {
+    if (!level_.hasBoss || !boss_.fighting()) return false;
+    boss_.debugDefeat();
+    return true;
+}
+
+void LevelSession::setArenaGates(bool closed) {
+    for (const auto& [x, y] : level_.bossGates) level_.setTile(x, y, closed ? Tile::Tree : Tile::Ground);
+}
+
+void LevelSession::updateBoss(float dt, unsigned& events) {
+    const Vec2 feet = player_.position();
+    // Walking well into the arena (clear of the gates) wakes the boss.
+    if (boss_.sleeping() && state_ == State::Playing) {
+        constexpr float kInset = 24.0f;
+        const RectF& a = level_.bossArena;
+        if (feet.x > a.x + kInset && feet.x < a.right() - kInset && feet.y > a.y + kInset &&
+            feet.y < a.bottom() - kInset / 2.0f) {
+            boss_.wake(true);
+            setArenaGates(true);
+            events |= kSessionBossIntro;
+        }
+    }
+
+    const bool wasDefeated = boss_.defeated();
+    boss_.update(dt * rules_.enemySpeed, feet);
+    if (!wasDefeated && boss_.defeated()) {
+        setArenaGates(false);
+        stats_.bossDefeated = true;
+        events |= kSessionBossDefeated;
+        for (int i = 0; i < 6; ++i)
+            effects_.spawn(Effects::Type::Sparkle, boss_.position() + Vec2{(i - 2.5f) * 14.0f, -30.0f - (i % 3) * 12.0f},
+                           i % 2 ? kGold : kWhite);
+    }
+    if (state_ != State::Playing || !boss_.fighting()) return;
+
+    if (boss_.landedThisStep()) {
+        for (int i = 0; i < 4; ++i)
+            effects_.spawn(Effects::Type::Dust, boss_.position() + Vec2{(i - 1.5f) * 18.0f, 0.0f}, kDustColor);
+        if ((feet - boss_.position()).length() < Boss::kCrushRadius) hurt(boss_.position(), events);
+    }
+
+    // Shockwave rings: on the ground, the ring passing under your feet hurts.
+    for (Boss::Ring& ring : boss_.rings()) {
+        if (!ring.active || ring.delay > 0.0f || ring.hitPlayer) continue;
+        const float d = (feet - ring.center).length();
+        if (std::fabs(d - ring.radius) < Boss::kRingThickness * 0.5f + 4.0f && player_.height() < 4.0f) {
+            ring.hitPlayer = true;
+            hurt(ring.center, events);
+        }
+    }
+
+    // Body contact.
+    if (boss_.height() > 16.0f) return; // in the air: the landing shadow is the danger
+    if ((feet - boss_.position()).length() > Boss::kBodyRadius + 8.0f) return;
+    const bool stomp = player_.isFalling() && player_.height() < kStompHeight;
+    if (boss_.vulnerable() && (stomp || player_.isDashing() || crushesEnemies())) {
+        boss_.hit(feet);
+        events |= kSessionBossHit;
+        effects_.spawn(Effects::Type::Sparkle, boss_.position() - Vec2{0.0f, 40.0f}, kWhite);
+        effects_.spawn(Effects::Type::Sparkle, boss_.position() - Vec2{12.0f, 30.0f}, kGold);
+        if (stomp) player_.bounce();
+    } else if (stomp) {
+        player_.bounce(); // boing: its mossy head is springy, but only hurts it when dizzy
+    } else if (boss_.hurtsOnContact() && player_.height() < kClearHeight) {
+        hurt(boss_.position(), events);
     }
 }
 
@@ -448,6 +524,10 @@ void LevelSession::objectiveProgress(int& have, int& need) const {
     case Objective::DefeatAll:
         need = static_cast<int>(enemies_.size());
         have = need - enemiesAlive();
+        return;
+    case Objective::Boss:
+        need = Boss::kMaxHealth;
+        have = level_.hasBoss ? boss_.hitsTaken() : need;
         return;
     }
 }

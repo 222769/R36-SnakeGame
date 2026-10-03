@@ -10,7 +10,7 @@ standable (the raft carries you).
 """
 SOLID = set("#To")
 DANGER = set("~^RV")
-ENTITY = set("chCkrEsbBm*g12345678KfS")
+ENTITY = set("chCkrEsbBm*g12345678KfSG")
 
 
 def reachable(rows):

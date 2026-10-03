@@ -45,6 +45,10 @@ public:
     static constexpr int kPropFlagReached = 1;
     static constexpr int kPropSign = 2;
 
+    // Boss sheet (the Meadow Guardian): 112x112 frames in a row.
+    static constexpr int kBossFrame = 112;
+    enum BossFrame { kBossIdle = 0, kBossCrouch = 1, kBossLeap = 2, kBossDazed = 3, kBossCalm = 4, kBossFrames = 5 };
+
     // Item sheet: 24x24 frames in a row: star, empty star, gem, then one
     // icon per power-up (see itemFrame).
     static constexpr int kItemSize = 24;
@@ -69,6 +73,7 @@ public:
     SDL_Texture* enemies() const { return enemies_.get(); }
     SDL_Texture* checkpoint() const { return checkpoint_.get(); }
     SDL_Texture* items() const { return items_.get(); }
+    SDL_Texture* boss() const { return boss_.get(); }
 
     // Paints every built-in sprite and checks the result is sane (used by
     // the unit tests).
@@ -85,6 +90,7 @@ private:
     TexturePtr enemies_;
     TexturePtr checkpoint_;
     TexturePtr items_;
+    TexturePtr boss_;
 };
 
 } // namespace pd

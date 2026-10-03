@@ -26,6 +26,14 @@ constexpr float kBannerTime = 2.6f;
 constexpr float kHudMargin = 40.0f;
 // Results-screen inputs are ignored briefly so gameplay presses don't skip it.
 constexpr float kClearInputDelay = 0.8f;
+constexpr float kCelebrateTime = 3.5f;
+
+// Cheap stable pseudo-random numbers for decoration (confetti).
+float hash01(int a, int b) {
+    unsigned h = static_cast<unsigned>(a) * 374761393u + static_cast<unsigned>(b) * 668265263u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return static_cast<float>((h ^ (h >> 16)) & 0xFFFF) / 65535.0f;
+}
 
 } // namespace
 
@@ -64,6 +72,8 @@ void PlayScene::restart() {
     overlay_ = Overlay::None;
     hudHurt_ = 0.0f;
     signIndex_ = -1;
+    bossCard_ = 0.0f;
+    celebrate_ = 0.0f;
 }
 
 void PlayScene::showToast(const char* text) {
@@ -85,6 +95,7 @@ void PlayScene::objectiveText(char* out, size_t size) const {
     case Objective::Stars: std::snprintf(out, size, "FIND ALL %d STARS!", need); break;
     case Objective::Rescue: std::snprintf(out, size, "RESCUE %d FRIENDS WITH Y!", need); break;
     case Objective::DefeatAll: std::snprintf(out, size, "DEFEAT ALL %d FOES!", need); break;
+    case Objective::Boss: std::snprintf(out, size, "CALM THE MEADOW GUARDIAN!"); break;
     }
 }
 
@@ -217,6 +228,9 @@ void PlayScene::update(float dt) {
         }
         // Debug warps (overlay on): R1 = next to the exit, L1 = next enemy.
         // Select+L1 toggles the overlay itself, so plain L1 only.
+        // R2 calms a boss at once (to test what comes after the fight).
+        if (game_.debugEnabled() && in.pressed(Action::R2) && session_->debugDefeatBoss())
+            SDL_Log("[debug] Boss calmed");
         if (game_.debugEnabled() && in.pressed(Action::R1) && session_->warpNear(level_.exit)) {
             camera_.snapTo(session_->player().position());
             SDL_Log("[debug] Warped next to the exit");
@@ -235,12 +249,21 @@ void PlayScene::update(float dt) {
     }
 
     PlayerInput pin;
-    pin.move = in.moveVector();
-    pin.hopPressed = in.pressed(Action::A);
-    pin.dashPressed = in.pressed(Action::B);
-    pin.usePressed = in.pressed(Action::X);
-    pin.interactPressed = in.pressed(Action::Y);
+    if (bossCard_ > 0.0f) {
+        bossCard_ -= dt; // the hero waits while the boss is introduced
+    } else {
+        pin.move = in.moveVector();
+        pin.hopPressed = in.pressed(Action::A);
+        pin.dashPressed = in.pressed(Action::B);
+        pin.usePressed = in.pressed(Action::X);
+        pin.interactPressed = in.pressed(Action::Y);
+    }
+    if (celebrate_ > 0.0f) celebrate_ -= dt;
     handleEvents(session_->update(pin, dt));
+    if (session_->hasBoss() && session_->boss().landedThisStep()) {
+        game_.audio().play(Sfx::Break);
+        camera_.shake(6.0f, 0.3f);
+    }
     if (session_->state() == LevelSession::State::TimeUp && session_->stateTime() >= kClearInputDelay) {
         if (in.pressed(Action::A) || in.pressed(Action::Start)) {
             audio.play(Sfx::MenuSelect);
@@ -335,6 +358,26 @@ void PlayScene::handleEvents(unsigned events) {
         showToast(text);
     }
     if (events & kSessionTimeUp) audio.play(Sfx::PlayerHurt);
+    if (events & kSessionBossIntro) {
+        tiles_.prepare(session_->level()); // the gates closed
+        camera_.shake(4.0f, 0.5f);
+        audio.play(Sfx::Denied);
+        if (!bossIntroSeen_) {
+            bossIntroSeen_ = true;
+            bossCard_ = Boss::kIntroTime;
+        }
+    }
+    if (events & kSessionBossHit) {
+        audio.play(Sfx::EnemyHit);
+        camera_.shake(5.0f, 0.25f);
+    }
+    if (events & kSessionBossDefeated) {
+        tiles_.prepare(session_->level()); // the gates opened
+        audio.play(Sfx::Star);
+        camera_.shake(3.0f, 0.4f);
+        celebrate_ = kCelebrateTime;
+    }
+    if (events & kSessionRespawned) tiles_.prepare(session_->level()); // gates may have reopened
     if (events & kSessionBlockBroken) {
         audio.play(Sfx::Break);
         camera_.shake(3.0f, 0.12f);
@@ -391,14 +434,19 @@ void PlayScene::render(SDL_Renderer* r) {
 
     const LevelSession::State state = session_->state();
     if (state == LevelSession::State::KnockedOut) renderKnockOut(r, cam);
-    if (session_->time() < kBannerTime && state == LevelSession::State::Playing && overlay_ == Overlay::None)
+    const bool bossAwake = session_->hasBoss() && !session_->boss().sleeping();
+    if (session_->time() < kBannerTime && state == LevelSession::State::Playing && overlay_ == Overlay::None &&
+        !bossAwake)
         renderBanner(r);
     if (state == LevelSession::State::Playing && overlay_ == Overlay::None) renderPrompt(r, cam);
+    if (session_->hasBoss()) renderBossHud(r);
+    if (celebrate_ > 0.0f) renderCelebration(r);
     renderToast(r);
     if (state == LevelSession::State::Cleared) renderClearPanel(r);
     if (state == LevelSession::State::TimeUp) renderTimeUpPanel(r);
     if (overlay_ == Overlay::Sign) renderSignDialog(r);
     if (overlay_ == Overlay::Info) renderInfoPanel(r);
+    if (bossCard_ > 0.0f) renderBossCard(r);
     if (overlay_ == Overlay::Paused) renderPauseMenu(r);
 }
 
@@ -487,8 +535,12 @@ void PlayScene::renderWorld(SDL_Renderer* r, Vec2 cam) const {
     // Characters, back to front: enemies behind the player first.
     const Player& player = session_->player();
     const float py = player.position().y;
+    const bool boss = session_->hasBoss();
+    if (boss) renderBossGround(r, cam);
     for (const Enemy& e : session_->enemies())
         if (e.position().y <= py) e.render(r, sprites.enemies(), cam);
+    const bool bossBehind = boss && session_->boss().position().y <= py;
+    if (bossBehind) renderBoss(r, cam);
     player.render(r, sprites.player(), cam);
     if (session_->powers().active(PowerUpType::ShieldBubble)) {
         // Wobbling translucent bubble around the hero.
@@ -500,8 +552,10 @@ void PlayScene::renderWorld(SDL_Renderer* r, Vec2 cam) const {
     }
     for (const Enemy& e : session_->enemies())
         if (e.position().y > py) e.render(r, sprites.enemies(), cam);
+    if (boss && !bossBehind) renderBoss(r, cam);
 
     session_->effects().render(r, cam);
+    if (boss) renderHopHint(r, cam);
 }
 
 void PlayScene::renderHud(SDL_Renderer* r) const {
@@ -561,7 +615,7 @@ void PlayScene::renderObjectiveHud(SDL_Renderer* r) const {
     int have = 0;
     int need = 0;
     session_->objectiveProgress(have, need);
-    if (need > 0) {
+    if (need > 0 && level_.objective != Objective::Boss) {
         const char* label = level_.objective == Objective::Coins     ? "COINS"
                             : level_.objective == Objective::Stars   ? "STARS"
                             : level_.objective == Objective::Rescue  ? "FRIENDS"
@@ -954,6 +1008,221 @@ void PlayScene::renderInitials(SDL_Renderer* r, int y) const {
         }
     }
     font.drawCentered(r, kScreenWidth / 2, y + 66, "ENTER YOUR NAME:  UP/DOWN LETTER   A NEXT / OK", 1, ui::kWhite);
+}
+
+// ---------------------------------------------------------------------------
+// Boss fight
+// ---------------------------------------------------------------------------
+
+void PlayScene::renderBossGround(SDL_Renderer* r, Vec2 cam) const {
+    const Boss& boss = session_->boss();
+    // Shockwave rings: a circle of soft glowing beads that fades as it grows.
+    for (const Boss::Ring& ring : boss.rings()) {
+        if (!ring.active || ring.delay > 0.0f) continue;
+        const float fade = 1.0f - ring.radius / Boss::kRingMaxRadius;
+        const Vec2 c = ring.center - cam;
+        const int beads = std::clamp(static_cast<int>(ring.radius * 6.2832f / 8.0f), 12, 240);
+        for (int i = 0; i < beads; ++i) {
+            const float a = 6.2832f * static_cast<float>(i) / static_cast<float>(beads);
+            const int x = static_cast<int>(c.x + std::cos(a) * ring.radius);
+            const int y = static_cast<int>(c.y + std::sin(a) * ring.radius * 0.92f);
+            if (x < -10 || y < -10 || x > kScreenWidth + 10 || y > kScreenHeight + 10) continue;
+            draw::softEllipse(r, x, y + 1, 13, 8, SDL_Color{255, 150, 40, static_cast<Uint8>(200.0f * fade)});
+            draw::fillCircle(r, x, y - 1, 4, SDL_Color{255, 248, 210, static_cast<Uint8>(255.0f * fade)});
+        }
+    }
+    // Where it will land: a shadow that darkens as it falls, and a warning ring.
+    if (boss.state() == Boss::State::Leap) {
+        const float t = boss.leapProgress();
+        const Vec2 c = boss.leapTarget() - cam;
+        const int x = static_cast<int>(c.x), y = static_cast<int>(c.y);
+        draw::softEllipse(r, x, y, static_cast<int>(24.0f + 26.0f * t), static_cast<int>(8.0f + 9.0f * t),
+                          SDL_Color{20, 10, 30, static_cast<Uint8>(90.0f + 120.0f * t)});
+        const int beads = 28;
+        const Uint8 alpha = static_cast<Uint8>(120.0f + 100.0f * std::fabs(std::sin(animTime_ * 12.0f)));
+        for (int i = 0; i < beads; ++i) {
+            const float a = 6.2832f * static_cast<float>(i) / beads;
+            draw::fillCircle(r, x + static_cast<int>(std::cos(a) * Boss::kCrushRadius),
+                             y + static_cast<int>(std::sin(a) * Boss::kCrushRadius * 0.5f), 2,
+                             SDL_Color{240, 80, 80, alpha});
+        }
+    }
+}
+
+void PlayScene::renderBoss(SDL_Renderer* r, Vec2 cam) const {
+    const Boss& boss = session_->boss();
+    SDL_Texture* tex = game_.sprites().boss();
+    if (!tex) return;
+    const Vec2 p = boss.position() - cam;
+    const float z = boss.height();
+    const int px = static_cast<int>(p.x), py = static_cast<int>(p.y);
+    if (px < -120 || py < -60 || px > kScreenWidth + 120 || py > kScreenHeight + 160) return;
+
+    // Ground shadow, smaller the higher it is (the landing spot has its own).
+    if (boss.state() != Boss::State::Leap)
+        draw::softEllipse(r, px, py, 48, 13, SDL_Color{10, 20, 10, 120});
+
+    int frame = Sprites::kBossIdle;
+    float sx = 1.0f, sy = 1.0f;
+    int shakeX = 0;
+    SDL_Color tint{255, 255, 255, 255};
+    const float t = boss.stateTime();
+    switch (boss.state()) {
+    case Boss::State::Sleeping:
+        sy = 1.0f + std::sin(animTime_ * 1.6f) * 0.025f; // slow breathing
+        break;
+    case Boss::State::Intro:
+        shakeX = static_cast<int>(std::sin(animTime_ * 40.0f) * 3.0f);
+        frame = t < 0.6f ? Sprites::kBossCrouch : Sprites::kBossLeap;
+        break;
+    case Boss::State::Idle:
+        sy = 1.0f + std::sin(t * 7.0f) * 0.035f;
+        sx = 2.0f - sy;
+        break;
+    case Boss::State::Telegraph:
+        frame = Sprites::kBossCrouch;
+        shakeX = static_cast<int>(std::sin(animTime_ * 50.0f) * 2.0f);
+        if (static_cast<int>(t * 10.0f) % 2 == 0) tint = SDL_Color{255, 150, 140, 255}; // flashing red
+        break;
+    case Boss::State::Leap: frame = Sprites::kBossLeap; break;
+    case Boss::State::Landed:
+        frame = Sprites::kBossCrouch;
+        sx = 1.12f;
+        sy = 0.9f;
+        break;
+    case Boss::State::Dazed:
+        frame = Sprites::kBossDazed;
+        sx = 1.0f + std::sin(t * 4.0f) * 0.03f;
+        break;
+    case Boss::State::Hurt:
+        frame = Sprites::kBossDazed;
+        if (static_cast<int>(t * 14.0f) % 2 == 0) tint = SDL_Color{255, 255, 255, 120};
+        shakeX = static_cast<int>(std::sin(t * 60.0f) * 4.0f * (1.0f - t));
+        break;
+    case Boss::State::Defeated:
+        frame = Sprites::kBossCalm;
+        sy = 1.0f + std::sin(animTime_ * 2.0f) * 0.02f;
+        break;
+    }
+    constexpr int kFeet = 104; // feet line inside the 112 px frame
+    const int w = static_cast<int>(Sprites::kBossFrame * sx);
+    const int h = static_cast<int>(Sprites::kBossFrame * sy);
+    const SDL_Rect src{frame * Sprites::kBossFrame, 0, Sprites::kBossFrame, Sprites::kBossFrame};
+    const SDL_Rect dst{px - w / 2 + shakeX, py - static_cast<int>(kFeet * sy) - static_cast<int>(z), w, h};
+    SDL_SetTextureColorMod(tex, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(tex, tint.a);
+    SDL_RenderCopy(r, tex, &src, &dst);
+    SDL_SetTextureColorMod(tex, 255, 255, 255);
+    SDL_SetTextureAlphaMod(tex, 255);
+
+    const BitmapFont& font = game_.font();
+    const int headY = dst.y + 6;
+    if (boss.state() == Boss::State::Sleeping) {
+        // Drifting "Z"s.
+        for (int i = 0; i < 3; ++i) {
+            const float ph = std::fmod(animTime_ * 0.6f + i * 0.33f, 1.0f);
+            const Uint8 a = static_cast<Uint8>(255.0f * (1.0f - ph));
+            font.draw(r, px + 30 + static_cast<int>(ph * 26.0f), headY - static_cast<int>(ph * 40.0f), "Z", 2 + i % 2,
+                      SDL_Color{255, 255, 255, a});
+        }
+    } else if (boss.state() == Boss::State::Dazed) {
+        // Stars circling its head.
+        if (SDL_Texture* items = game_.sprites().items()) {
+            for (int i = 0; i < 3; ++i) {
+                const float a = animTime_ * 5.0f + i * 2.094f;
+                const SDL_Rect s{Sprites::kItemStar * Sprites::kItemSize, 0, Sprites::kItemSize, Sprites::kItemSize};
+                const SDL_Rect d{px + static_cast<int>(std::cos(a) * 34.0f) - 9, headY + 4 + static_cast<int>(std::sin(a) * 9.0f), 18, 18};
+                SDL_RenderCopy(r, items, &s, &d);
+            }
+        }
+    }
+}
+
+void PlayScene::renderHopHint(SDL_Renderer* r, Vec2 cam) const {
+    // "HOP!" above the hero when a shockwave is about to reach them.
+    const Player& player = session_->player();
+    if (player.isAirborne() || session_->state() != LevelSession::State::Playing) return;
+    const Vec2 feet = player.position();
+    bool near = false;
+    for (const Boss::Ring& ring : session_->boss().rings()) {
+        if (!ring.active || ring.delay > 0.0f || ring.hitPlayer) continue;
+        const float gap = (feet - ring.center).length() - ring.radius;
+        if (gap > 0.0f && gap < 70.0f) near = true;
+    }
+    if (!near) return;
+    const Vec2 p = feet - cam;
+    const int bob = static_cast<int>(std::fabs(std::sin(animTime_ * 12.0f)) * -5.0f);
+    const SDL_Rect pill{static_cast<int>(p.x) - 30, static_cast<int>(p.y) - 76 + bob, 60, 26};
+    draw::roundedRect(r, pill, SDL_Color{236, 92, 120, 235}, SDL_Color{255, 255, 255, 255}, SDL_Color{0, 0, 0, 80});
+    game_.font().drawCentered(r, pill.x + pill.w / 2, pill.y + 5, "HOP!", 2, ui::kWhite, false);
+}
+
+void PlayScene::renderBossHud(SDL_Renderer* r) const {
+    const Boss& boss = session_->boss();
+    if (!boss.fighting() && celebrate_ <= 0.0f) return;
+    const BitmapFont& font = game_.font();
+    constexpr int kW = 300;
+    const SDL_Rect box{kScreenWidth / 2 - kW / 2, 52, kW, 34};
+    ui::drawPanel(r, box, SDL_Color{20, 16, 40, 170}, SDL_Color{0, 0, 0, 0});
+    font.drawShadowed(r, box.x + 12, box.y + 9, "GUARDIAN", 2, ui::kWhite);
+    // One pip per hit point, grouped in pairs (the three phases).
+    const int pipW = 18, gapSmall = 3, gapBig = 9;
+    int x = box.x + box.w - 12 - (Boss::kMaxHealth * pipW + 3 * gapSmall + 2 * gapBig);
+    const SDL_Color phaseCol[3] = {{120, 210, 110, 255}, {246, 196, 62, 255}, {236, 92, 92, 255}};
+    for (int i = 0; i < Boss::kMaxHealth; ++i) {
+        const bool full = i >= boss.hitsTaken();
+        const SDL_Color c = full ? phaseCol[i / 2] : SDL_Color{80, 80, 100, 160};
+        draw::roundedRect(r, SDL_Rect{x, box.y + 9, pipW, 16}, c, SDL_Color{0, 0, 0, 0});
+        x += pipW + (i % 2 ? gapBig : gapSmall);
+    }
+}
+
+void PlayScene::renderBossCard(SDL_Renderer* r) const {
+    // Fades in, holds, fades out over Boss::kIntroTime.
+    const float t = Boss::kIntroTime - bossCard_;
+    const float a = std::clamp(std::min(t / 0.3f, bossCard_ / 0.3f), 0.0f, 1.0f);
+    ui::dimScreen(r, static_cast<Uint8>(110.0f * a));
+    const int slide = static_cast<int>((1.0f - a) * 80.0f);
+    const SDL_Rect band{-20 + slide, 150, kScreenWidth + 40, 180};
+    draw::roundedRect(r, band, SDL_Color{30, 50, 30, static_cast<Uint8>(230.0f * a)},
+                      SDL_Color{246, 196, 62, static_cast<Uint8>(255.0f * a)}, SDL_Color{0, 0, 0, static_cast<Uint8>(100.0f * a)});
+    if (SDL_Texture* tex = game_.sprites().boss()) {
+        const SDL_Rect src{Sprites::kBossIdle * Sprites::kBossFrame, 0, Sprites::kBossFrame, Sprites::kBossFrame};
+        const SDL_Rect dst{24 + slide, 152, 168, 168};
+        SDL_SetTextureAlphaMod(tex, static_cast<Uint8>(255.0f * a));
+        SDL_RenderCopy(r, tex, &src, &dst);
+        SDL_SetTextureAlphaMod(tex, 255);
+    }
+    const BitmapFont& font = game_.font();
+    const Uint8 ta = static_cast<Uint8>(255.0f * a);
+    const int x = 206 + slide;
+    font.drawShadowed(r, x, 168, "BOSS!", 2, SDL_Color{236, 120, 120, ta});
+    font.drawShadowed(r, x, 190, "MEADOW GUARDIAN", 4, SDL_Color{255, 214, 64, ta});
+    font.draw(r, x, 240, "WATCH ITS SHADOW WHEN IT LEAPS", 2, SDL_Color{255, 255, 255, ta});
+    font.draw(r, x, 264, "HOP OVER THE SHOCKWAVES", 2, SDL_Color{255, 255, 255, ta});
+    font.draw(r, x, 288, "DIZZY? HOP ON IT OR DASH!", 2, SDL_Color{150, 240, 170, ta});
+}
+
+void PlayScene::renderCelebration(SDL_Renderer* r) const {
+    const float t = kCelebrateTime - celebrate_;
+    // Confetti falling across the screen.
+    const SDL_Color colors[5] = {{255, 214, 64, 255}, {236, 120, 156, 255}, {120, 200, 255, 255}, {120, 230, 160, 255}, {255, 255, 255, 255}};
+    for (int i = 0; i < 60; ++i) {
+        const float x0 = hash01(i, 1) * kScreenWidth;
+        const float speed = 90.0f + hash01(i, 2) * 120.0f;
+        const float y = -20.0f + (t - hash01(i, 3) * 0.8f) * speed;
+        if (y < -20.0f || y > kScreenHeight) continue;
+        const float sway = std::sin(t * 4.0f + i) * 14.0f;
+        const SDL_Color c = colors[i % 5];
+        draw::roundedRect(r, SDL_Rect{static_cast<int>(x0 + sway), static_cast<int>(y), 6 + i % 3 * 2, 9}, c,
+                          SDL_Color{0, 0, 0, 0});
+    }
+    const float a = std::clamp(std::min(t / 0.25f, celebrate_ / 0.4f), 0.0f, 1.0f);
+    const Uint8 ta = static_cast<Uint8>(255.0f * a);
+    const int bounce = static_cast<int>(std::fabs(std::sin(t * 5.0f)) * -6.0f);
+    const BitmapFont& font = game_.font();
+    font.drawCentered(r, kScreenWidth / 2, 120 + bounce, "GUARDIAN CALMED!", 5, SDL_Color{255, 214, 64, ta});
+    font.drawCentered(r, kScreenWidth / 2, 172, "THE GATES ARE OPEN - REACH THE FLAG!", 2, SDL_Color{255, 255, 255, ta});
 }
 
 // ---------------------------------------------------------------------------

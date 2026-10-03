@@ -7,7 +7,7 @@ class LevelSession;
 // Points awarded at the end of a level. Every part is shown on the results
 // panel, so the rules are easy to read:
 //   coins      10 each (Double Coins counts them twice)
-//   foes       50 each
+//   foes       50 each, 1500 for calming a boss
 //   stars     500 each
 //   secrets   300 each
 //   hearts    200 per heart left
@@ -17,6 +17,7 @@ class LevelSession;
 struct ScoreBreakdown {
     static constexpr int kCoin = 10;
     static constexpr int kFoe = 50;
+    static constexpr int kBoss = 1500;
     static constexpr int kStar = 500;
     static constexpr int kSecret = 300;
     static constexpr int kHeart = 200;

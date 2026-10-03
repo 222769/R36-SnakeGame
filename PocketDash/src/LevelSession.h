@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Boss.h"
 #include "Collectibles.h"
 #include "Difficulty.h"
 #include "Effects.h"
@@ -44,6 +45,9 @@ enum SessionEvent : unsigned {
     kSessionSecret = 1u << 26,      // walked into a secret passage for the first time
     kSessionExitLocked = 1u << 27,  // touched the flag before finishing the objective
     kSessionTimeUp = 1u << 28,      // the time limit ran out
+    kSessionBossIntro = 1u << 29,   // the boss woke up and the arena gates closed
+    kSessionBossHit = 1u << 30,     // the boss took a hit
+    kSessionBossDefeated = 1u << 31, // the boss calmed down and the gates opened
 };
 
 struct SessionStats {
@@ -54,6 +58,7 @@ struct SessionStats {
     int heartsLost = 0;
     int knockOuts = 0;
     int splashes = 0;
+    bool bossDefeated = false;
 };
 
 // The gameplay simulation of one level: player, enemies, coins, hearts,
@@ -75,6 +80,9 @@ struct SessionStats {
 //  * Y rescues lost friends and reads signs.
 //  * The exit flag only opens once the level's objective is complete.
 //  * A time limit (50% longer on Relaxed) ends in "time up" and a retry.
+//  * Boss levels: walking into the arena wakes the boss and closes the
+//    gates behind you (see Boss.h). A knock-out sends the boss back to
+//    sleep, keeping the hits you landed.
 //
 // The session works on its own copy of the level, because smashed blocks
 // change the map; restart() restores the original.
@@ -145,6 +153,8 @@ public:
     // Index of the sign just read (valid after kSessionSign).
     int readingSign() const { return readingSign_; }
     const std::vector<Enemy>& enemies() const { return enemies_; }
+    bool hasBoss() const { return level_.hasBoss; }
+    const Boss& boss() const { return boss_; }
     int enemiesAlive() const;
     const Effects& effects() const { return effects_; }
 
@@ -156,6 +166,9 @@ public:
     int activeCheckpoint() const { return activeCheckpoint_; }
     Vec2 respawnPoint() const;
     Vec2 lastSafePosition() const { return lastSafe_; }
+
+    // Debug: calms an awake boss at once. Returns false if there is none.
+    bool debugDefeatBoss();
 
     // Debug: puts the player on the first free tile near `target`.
     bool warpNear(Vec2 target);
@@ -172,6 +185,8 @@ private:
     void updateRafts(float dt);
     void updateLocksAndSecrets(unsigned& events);
     void interact(unsigned& events);
+    void updateBoss(float dt, unsigned& events);
+    void setArenaGates(bool closed);
     bool onRaft() const;
     int nearestFriend() const;
     int nearestSign() const;
@@ -201,6 +216,7 @@ private:
     std::vector<Raft> rafts_;
     int readingSign_ = -1;
     std::vector<Enemy> enemies_;
+    Boss boss_;
     std::vector<Checkpoint> checkpoints_;
     int activeCheckpoint_ = -1;
     Effects effects_;

@@ -14,6 +14,7 @@ Sprites are drawn 1:1 at the sizes below, with smooth (linear) filtering.
 | `coin.png`        | 72x24: 3 spin frames of 24x24                                 |
 | `enemies.png`     | 64x128: 2 frames x 4 rows (slime, beetle facing right, mushroom, lost chick) of 32x32 |
 | `props.png`       | 96x32: checkpoint flag (not reached), flag (reached), sign (32x32 each) |
+| `boss.png`        | 560x112: the Meadow Guardian, 5 frames of 112x112 (idle, crouch, leap, dizzy, calm); feet at y=104 |
 | `items.png`       | 288x24: star, empty star, gem, power-up icons 1–8, key (24x24 each; icon 8 is drawn white and tinted) |
 
 The title screen's large hero (2 frames of 80x100) is always painted.

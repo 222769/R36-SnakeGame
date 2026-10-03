@@ -389,25 +389,29 @@ def sprint():
     return g, ["STAR SPRINT! REACH THE FLAG BEFORE THE CLOCK RUNS OUT. GRAB THE SPEED SHOES!"]
 
 
-# --- 1-8 Meadow Guardian: the boss arena (boss arrives in Phase 7) -----------
-@level(id="1-8", name="MEADOW GUARDIAN", objective="exit")
+# --- 1-8 Meadow Guardian: the boss arena ------------------------------------
+# The clearing is walled by trees; its two openings are arena gates (|) that
+# close while the fight is on. The boss (G) wakes when you walk in.
+@level(id="1-8", name="MEADOW GUARDIAN", objective="boss")
 def guardian():
     g = Grid(30, 20)
     g.put(15, 17, "P")
     g.put(13, 17, "S")
     g.box(6, 4, 18, 12, "T")
-    g.put(15, 15, ".")
-    g.put(15, 4, ".")
+    g.put(15, 15, "|")
+    g.put(15, 4, "|")
     for (x, y) in [(10, 8), (19, 8), (10, 12), (19, 12)]:
         g.put(x, y, "o")
+    g.put(15, 9, "G")
+    g.put(8, 13, "h")
     g.put(2, 2, "*")
     g.put(27, 2, "*")
     g.put(2, 17, "*")
     g.put(26, 17, "h")
     g.put(15, 2, "E")
     for x in range(12, 19, 2):
-        g.put(x, 10, "c")
-    return g, ["THE MEADOW GUARDIAN SLEEPS IN THE CLEARING... (THE BOSS WAKES UP IN A FUTURE UPDATE!)"]
+        g.put(x, 11, "c")
+    return g, ["THE MEADOW GUARDIAN SLEEPS IN THE CLEARING. HOP OVER ITS SHOCKWAVES, THEN BOUNCE ON IT WHILE IT IS DIZZY!"]
 
 
 # One hidden gem per level (1-6 places its own), mostly in secret rooms.

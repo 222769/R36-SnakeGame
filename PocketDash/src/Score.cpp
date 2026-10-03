@@ -15,7 +15,7 @@ ScoreBreakdown computeScore(const LevelSession& session) {
     ScoreBreakdown s;
     const SessionStats& stats = session.stats();
     s.coins = stats.coinPoints * ScoreBreakdown::kCoin;
-    s.foes = stats.enemiesDefeated * ScoreBreakdown::kFoe;
+    s.foes = stats.enemiesDefeated * ScoreBreakdown::kFoe + (stats.bossDefeated ? ScoreBreakdown::kBoss : 0);
     s.stars = session.items().starsCollected() * ScoreBreakdown::kStar;
     s.secrets = session.secretsFound() * ScoreBreakdown::kSecret;
     s.hearts = std::max(0, session.hearts()) * ScoreBreakdown::kHeart;

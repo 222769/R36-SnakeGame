@@ -177,13 +177,21 @@ Legend: `[x]` done · `[ ]` to do · `[~]` partly done / skeleton in place
 - [x] `--menu-test` headless walk through every screen (CTest `menu_test`); `--scene`, `--demo-progress`
 - [ ] On the device: check that the remap flow works with the R36S d-pad (hat vs buttons)
 
-## Phase 7: Boss — The Meadow Guardian
+## ✅ Phase 7: Boss — The Meadow Guardian (complete)
 
-- [ ] Arena level 1-8
-- [ ] Boss states: idle → telegraph (crouch and flash, shadow grows) → leap → land shockwave ring → recover (vulnerable)
-- [ ] Shockwave rings that you hop over; the hop reads clearly to younger players
-- [ ] 3 phases, faster and adding a double-jump in phase 3; boss health bar
-- [ ] Boss intro card and defeat celebration
+- [x] Arena level 1-8: a tree-walled clearing whose gates (`|`) close when the fight starts and open when it ends;
+      the arena is found automatically around the boss marker (`G`)
+- [x] Boss states: sleeping → intro → idle (shuffles closer) → telegraph (crouch and red flash) → leap (landing
+      shadow and warning ring) → land (shockwave rings) → dazed (vulnerable: hop on it or dash into it) → hurt
+- [x] Shockwave rings that you hop over; a "HOP!" bubble appears when one is about to reach you
+- [x] 3 phases (two hits each): two rings per landing in phase 2, a double leap in phase 3; health bar
+      with pips grouped by phase
+- [x] Boss intro card (the hero waits) and a defeat celebration (confetti, "GUARDIAN CALMED!", the boss turns friendly)
+- [x] A knock-out puts the boss back to sleep with its injuries kept; objective `boss`; +1,500 points
+- [x] Painted boss art (idle, crouch, leap, dizzy, calm), PNG override `assets/sprites/boss.png`
+- [x] Debug: R2 (with the overlay on) calms the boss at once
+- [x] Unit tests: state machine, map rules, gates, crush, rings vs. hop, stomp/dash/contact, a full fight, knock-out
+- [ ] Tune timings on the device with children playing
 
 ## ✅ Visual overhaul: modern look, natural colours (complete)
 

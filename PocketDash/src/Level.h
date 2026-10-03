@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace pd {
@@ -36,6 +37,7 @@ enum class Objective {
     Stars,     // collect all the stars
     Rescue,    // rescue every lost friend (Y)
     DefeatAll, // defeat every enemy
+    Boss,      // calm the boss (needs a G on the map)
 };
 
 const char* objectiveName(Objective o);     // "exit", "coins", ... (file format)
@@ -74,6 +76,9 @@ enum CollisionPass : unsigned {
 //   1-8  power-up: 1 speed shoes, 2 shield, 3 magnet, 4 super dash,
 //        5 double coins, 6 tiny, 7 giant, 8 rainbow star
 //   K  key         f  lost friend (rescue with Y)    S  sign (read with Y)
+//   G  boss (the Meadow Guardian)  |  arena gate: open ground that closes
+//      while the boss fight is on. The arena is the area around G closed off
+//      by solid tiles and gates; it must not contain P or E.
 // On water:
 //   R  raft moving left/right        V  raft moving up/down
 //
@@ -142,6 +147,12 @@ public:
     std::vector<Vec2> friends;
     std::vector<SignSpawn> signs;
     std::vector<RaftSpawn> rafts;
+
+    // Boss fight (G on the map).
+    bool hasBoss = false;
+    Vec2 bossSpawn;
+    RectF bossArena;                            // bounding box of the arena, pixels
+    std::vector<std::pair<int, int>> bossGates; // tile coordinates of the | gates
 
     Objective objective = Objective::ReachExit;
     int goal = 0;           // coins needed for Objective::Coins

@@ -24,7 +24,7 @@ bool charToTile(char c, Tile& out) {
     case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8':
         out = Tile::Ground;
         return true;
-    case 'K': case 'f': case 'S':
+    case 'K': case 'f': case 'S': case 'G': case '|':
         out = Tile::Ground;
         return true;
     case 'R': case 'V': out = Tile::Water; return true; // rafts float on water
@@ -126,13 +126,14 @@ const char* objectiveName(Objective o) {
     case Objective::Stars: return "stars";
     case Objective::Rescue: return "rescue";
     case Objective::DefeatAll: return "defeat";
+    case Objective::Boss: return "boss";
     }
     return "exit";
 }
 
 bool objectiveFromName(const std::string& s, Objective& out) {
     for (Objective o : {Objective::ReachExit, Objective::Coins, Objective::Stars, Objective::Rescue,
-                        Objective::DefeatAll}) {
+                        Objective::DefeatAll, Objective::Boss}) {
         if (s == objectiveName(o)) {
             out = o;
             return true;
@@ -156,6 +157,7 @@ bool Level::fromAscii(const std::vector<std::string>& rows, Level& out, std::str
     Level level(width, height);
     int spawns = 0;
     int exits = 0;
+    int bosses = 0;
 
     for (int y = 0; y < height; ++y) {
         if (static_cast<int>(rows[y].size()) != width)
@@ -202,6 +204,12 @@ bool Level::fromAscii(const std::vector<std::string>& rows, Level& out, std::str
                 level.friends.push_back(tileCenter(x, y) + Vec2{0.0f, 6.0f});
             } else if (c == 'S') {
                 level.signs.push_back({tileCenter(x, y) + Vec2{0.0f, 6.0f}, std::string()});
+            } else if (c == 'G') {
+                level.hasBoss = true;
+                level.bossSpawn = tileCenter(x, y) + Vec2{0.0f, 6.0f};
+                ++bosses;
+            } else if (c == '|') {
+                level.bossGates.emplace_back(x, y);
             } else if (c == 'R' || c == 'V') {
                 level.rafts.push_back({tileCenter(x, y), c == 'R' ? Vec2{1.0f, 0.0f} : Vec2{0.0f, 1.0f}});
             }
@@ -209,6 +217,41 @@ bool Level::fromAscii(const std::vector<std::string>& rows, Level& out, std::str
     }
     if (spawns != 1) return fail("map needs exactly one player spawn 'P' (found " + std::to_string(spawns) + ")");
     if (exits < 1) return fail("map needs an exit 'E'");
+    if (bosses > 1) return fail("map has more than one boss 'G'");
+    if (!level.bossGates.empty() && bosses == 0) return fail("arena gates '|' need a boss 'G'");
+    if (bosses == 1) {
+        level.objective = Objective::Boss; // a boss level is won by calming the boss
+        // The arena: everything walkable reachable from G without crossing a gate.
+        const int gx = static_cast<int>(level.bossSpawn.x) / kTileSize;
+        const int gy = static_cast<int>(level.bossSpawn.y) / kTileSize;
+        std::vector<char> seen(static_cast<size_t>(width * height), 0);
+        std::vector<std::pair<int, int>> stack{{gx, gy}};
+        seen[static_cast<size_t>(gy * width + gx)] = 1;
+        int minX = gx, maxX = gx, minY = gy, maxY = gy;
+        while (!stack.empty()) {
+            const auto [cx, cy] = stack.back();
+            stack.pop_back();
+            const char c = rows[static_cast<size_t>(cy)][static_cast<size_t>(cx)];
+            if (c == 'P' || c == 'E') return fail("the boss arena must be closed off by walls and '|' gates");
+            minX = std::min(minX, cx);
+            maxX = std::max(maxX, cx);
+            minY = std::min(minY, cy);
+            maxY = std::max(maxY, cy);
+            const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            for (const auto& d : dirs) {
+                const int nx = cx + d[0], ny = cy + d[1];
+                if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+                const size_t n = static_cast<size_t>(ny * width + nx);
+                if (seen[n] || rows[static_cast<size_t>(ny)][static_cast<size_t>(nx)] == '|') continue;
+                if (isSolid(level.tileAt(nx, ny))) continue;
+                seen[n] = 1;
+                stack.emplace_back(nx, ny);
+            }
+        }
+        level.bossArena = RectF{static_cast<float>(minX * kTileSize), static_cast<float>(minY * kTileSize),
+                                static_cast<float>((maxX - minX + 1) * kTileSize),
+                                static_cast<float>((maxY - minY + 1) * kTileSize)};
+    }
 
     level.groupSecrets();
     out = std::move(level);

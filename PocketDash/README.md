@@ -6,13 +6,14 @@ native ARM Linux executable, and it also runs on a normal PC for development.
 
 > **Pick up and play in seconds.**
 
-**Status:** Phases 1–6 of 8 are complete. World 1 has 8 levels loaded from
+**Status:** Phases 1–7 of 8 are complete. World 1 has 8 levels loaded from
 data files, with objectives (coins, stars, rescues, timed runs), signs,
 rafts, keys and secrets. It also has enemies, hearts, checkpoints, the three
 difficulties, eight power-ups and breakable blocks. The game has a main
 menu, a level-select map, scores with high-score tables, settings
 (including a controller test and button remapping), saves, and a collection
-of outfits unlocked with gems. See [TODO.md](TODO.md) for the roadmap.
+of outfits unlocked with gems. Level 1-8 ends World 1 with a boss fight
+against the Meadow Guardian. See [TODO.md](TODO.md) for the roadmap.
 
 ![Title screen](docs/title.png)
 ![Main menu](docs/main_menu.png)
@@ -23,6 +24,9 @@ of outfits unlocked with gems. See [TODO.md](TODO.md) for the roadmap.
 ![Signs](docs/signs.png)
 ![Lost friends](docs/lost_friends.png)
 ![Level clear](docs/level_clear.png)
+![Boss intro](docs/boss_intro.png)
+![Boss fight](docs/boss.png)
+![Boss calmed](docs/boss_calmed.png)
 ![High scores](docs/high_scores.png)
 ![Settings](docs/settings.png)
 ![Collection](docs/collection.png)
@@ -67,6 +71,23 @@ of outfits unlocked with gems. See [TODO.md](TODO.md) for the roadmap.
 | Slime    | Squishes down, then hops towards you                             |
 | Beetle   | Walks back and forth, pausing to turn                            |
 | Mushroom | Shivers, does a big bounce and sends a shockwave ring: hop it!   |
+
+**The Meadow Guardian (level 1-8).** A big mossy guardian sleeps in a
+clearing. Walk in and it wakes up, and the clearing's gates close behind you.
+
+* It shuffles towards you, and touching it hurts.
+* When it **crouches and flashes red**, it is about to leap at the spot
+  where you stand. A shadow and a red ring show where it will land, so step
+  away.
+* Its landing sends **shockwave rings** across the ground. **Hop (A)** over
+  them; a "HOP!" bubble appears when one is about to reach you.
+* After landing it is **dizzy** (spiral eyes, circling stars). **Hop on it**
+  or **dash into it** to land a hit.
+* It takes six hits over three phases, shown on its health bar. In phase 2
+  each landing sends two rings. In phase 3 it leaps twice in a row.
+* If you run out of hearts, it goes back to sleep but keeps the hits you
+  landed. When it is beaten it calms down, the gates open, and the flag is
+  yours. Calming it is worth 1,500 points.
 
 **Difficulty:** *Relaxed* gives 5 hearts, slower enemies and extra checkpoints.
 *Normal* is the default. *Challenge* has faster enemies, fewer checkpoints and
@@ -125,6 +146,7 @@ Change it in **Settings** (it applies from the next level), or with
 | Select + L1   | F1                  | Toggle debug overlay            |
 | R1 *(debug on)* | W *(debug on)*    | Warp next to the level exit     |
 | L1 *(debug on)* | Q *(debug on)*    | Warp to the next enemy          |
+| R2 *(debug on)* | 2 *(debug on)*    | Calm the boss at once           |
 | –             | F11                 | Toggle fullscreen               |
 
 The spec's keyboard layout puts the X/Y buttons on the **A** and **S** keys,
@@ -336,6 +358,7 @@ PocketDash/
 │   ├── PlayScene.*         gameplay presentation: camera, sound, HUD, pause, results
 │   ├── LevelSession.*      gameplay simulation (no SDL): rules, damage, checkpoints
 │   ├── Enemy.*             slime / beetle / mushroom behaviours and drawing
+│   ├── Boss.*              the Meadow Guardian's state machine and shockwave rings (no SDL)
 │   ├── EntityTypes.h       enemy and checkpoint spawn data
 │   ├── Difficulty.h        per-difficulty rules
 │   ├── Level.*             tile map, ASCII map parser, tile collision (moveAndCollide)
@@ -383,8 +406,9 @@ PocketDash/
 * **Levels are ASCII maps** (`#` hedge, `T` tree, `~` water, `=` bridge,
   `^` thorns, `x` crate, `X` boulder, `:` tiny gap, `c` coin, `h` heart,
   `*` star, `g` gem, `1`–`8` power-ups, `s`/`b`/`B`/`m` enemies,
-  `C`/`k`/`r` checkpoints, `P` spawn, `E` exit — see `src/Level.h`). Phase 5 loads them
-  from `assets/levels/`.
+  `C`/`k`/`r` checkpoints, `P` spawn, `E` exit, `G` boss, `|` arena gate — see
+  `src/Level.h`). Phase 5 loads them from `assets/levels/`. The boss arena is
+  found automatically: it is the area around `G` closed off by walls and gates.
 * **Gameplay is a pure simulation.** `LevelSession` has no SDL rendering or
   input code. The unit tests play through small ASCII maps (stomping, water
   rescues, knock-outs, checkpoints) without opening a window.

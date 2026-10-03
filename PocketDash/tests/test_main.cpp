@@ -1,6 +1,7 @@
 // Pocket Dash unit tests. Dependency-free: no SDL window or audio needed.
 
 #include "BuiltinLevels.h"
+#include "Boss.h"
 #include "Camera.h"
 #include "Collectibles.h"
 #include "Effects.h"
@@ -1573,10 +1574,269 @@ void testScoreBreakdown() {
     CHECK(h.total() == static_cast<int>(std::lround(h.subtotal() * h.multiplier)));
 }
 
+// --- Phase 7: the Meadow Guardian --------------------------------------------------
+
+const std::vector<std::string> kArenaMap = {
+    "################",
+    "#E.............#",
+    "#.TTTTTTTTTTT..#",
+    "#.T.........T..#",
+    "#.T.........T..#",
+    "#.T....G....T..#",
+    "#.T.........T..#",
+    "#.T.........T..#",
+    "#.TTTTT|TTTTT..#",
+    "#......P.......#",
+    "################",
+};
+
+// Steps a boss alone until it reaches `state` (false if it never does).
+bool runBossUntil(Boss& b, Boss::State state, Vec2 player, int maxSteps = 3000) {
+    for (int i = 0; i < maxSteps; ++i) {
+        if (b.state() == state) return true;
+        b.update(kDt, player);
+    }
+    return b.state() == state;
+}
+
+void testBossMapParsing() {
+    Level level = parseOrDie(kArenaMap);
+    CHECK(level.hasBoss);
+    CHECK_NEAR(level.bossArena.x, 96.0f, 0.01f);
+    CHECK_NEAR(level.bossArena.y, 96.0f, 0.01f);
+    CHECK_NEAR(level.bossArena.w, 288.0f, 0.01f);
+    CHECK_NEAR(level.bossArena.h, 160.0f, 0.01f);
+    CHECK(level.bossGates.size() == 1 && level.bossGates[0].first == 7 && level.bossGates[0].second == 8);
+    CHECK(level.tileAt(7, 8) == Tile::Ground); // gates start open
+
+    std::string error;
+    Level bad;
+    CHECK(!Level::fromAscii({"#######", "#P.G.E#", "#######"}, bad, &error)); // arena not closed off
+    CHECK(error.find("arena") != std::string::npos);
+    CHECK(!Level::fromAscii({"#######", "#P.|.E#", "#######"}, bad, &error)); // gate without a boss
+    CHECK(!Level::fromAscii({"#########", "#P#G#G#E#", "#########"}, bad, &error)); // two bosses
+    Objective o;
+    CHECK(objectiveFromName("boss", o) && o == Objective::Boss);
+    CHECK(std::string(objectiveName(Objective::Boss)) == "boss");
+}
+
+void testBossStateMachine() {
+    Boss b;
+    const RectF arena{0.0f, 0.0f, 320.0f, 320.0f};
+    b.reset({160.0f, 160.0f}, arena);
+    const Vec2 player{80.0f, 240.0f};
+    CHECK(b.sleeping() && b.health() == Boss::kMaxHealth && b.phase() == 1);
+    CHECK(!b.hit(player)); // asleep: no hits
+    b.update(1.0f, player);
+    CHECK(b.sleeping()); // sleeps until woken
+
+    b.wake(true);
+    CHECK(b.state() == Boss::State::Intro);
+    CHECK(runBossUntil(b, Boss::State::Idle, player));
+    CHECK(b.hurtsOnContact());
+    CHECK(!b.hit(player)); // not dizzy yet
+
+    // Telegraph, then a leap at where the player stood when it took off.
+    CHECK(runBossUntil(b, Boss::State::Telegraph, player));
+    CHECK(runBossUntil(b, Boss::State::Leap, player));
+    CHECK((b.leapTarget() - player).length() < 1.0f);
+    bool rose = false;
+    while (b.state() == Boss::State::Leap) {
+        b.update(kDt, player);
+        if (b.height() > Boss::kLeapHeight * 0.9f) rose = true;
+    }
+    CHECK(rose);
+    CHECK(b.state() == Boss::State::Landed && b.height() == 0.0f);
+    int rings = 0;
+    for (const auto& r : b.rings()) rings += r.active ? 1 : 0;
+    CHECK(rings == Boss::rules(1).ringsPerLanding);
+    const float r0 = b.rings()[0].radius;
+    b.update(0.1f, player);
+    CHECK(b.rings()[0].radius > r0); // the ring spreads
+
+    // Dizzy: now it can be hit.
+    CHECK(runBossUntil(b, Boss::State::Dazed, player));
+    CHECK(b.vulnerable() && !b.hurtsOnContact());
+    CHECK(b.hit(player));
+    CHECK(b.health() == Boss::kMaxHealth - 1 && b.state() == Boss::State::Hurt);
+    for (const auto& r : b.rings()) CHECK(!r.active); // no cheap hit right after
+    CHECK(!b.hit(player)); // one hit per daze
+
+    // Second hit -> phase 2: two rings per landing, the second delayed.
+    CHECK(runBossUntil(b, Boss::State::Dazed, player));
+    CHECK(b.hit(player));
+    CHECK(b.phase() == 2);
+    CHECK(runBossUntil(b, Boss::State::Landed, player));
+    int active = 0, delayed = 0;
+    for (const auto& r : b.rings()) {
+        active += r.active ? 1 : 0;
+        delayed += r.active && r.delay > 0.0f ? 1 : 0;
+    }
+    CHECK(active == 2 && delayed == 1);
+
+    // Phase 3 leaps twice before getting dizzy.
+    CHECK(runBossUntil(b, Boss::State::Dazed, player));
+    CHECK(b.hit(player));
+    CHECK(runBossUntil(b, Boss::State::Dazed, player));
+    CHECK(b.hit(player));
+    CHECK(b.phase() == 3);
+    const int leapsBefore = b.leapsDone();
+    CHECK(runBossUntil(b, Boss::State::Dazed, player));
+    CHECK(b.leapsDone() - leapsBefore == 2);
+
+    // Leaps never leave the arena.
+    CHECK(b.position().x >= arena.x && b.position().x <= arena.right());
+
+    // Last two hits: it calms down for good.
+    CHECK(b.hit(player));
+    CHECK(runBossUntil(b, Boss::State::Dazed, player));
+    CHECK(b.hit(player));
+    CHECK(b.health() == 0);
+    CHECK(runBossUntil(b, Boss::State::Defeated, player));
+    CHECK(b.defeated() && !b.fighting() && !b.hurtsOnContact());
+    b.sleep();
+    CHECK(b.defeated()); // stays calm
+}
+
+void testBossArenaGatesAndRings() {
+    const Level level = parseOrDie(kArenaMap);
+    // Walking in wakes it and shuts the gate behind you.
+    LevelSession s(level, Difficulty::Normal);
+    CHECK(s.boss().sleeping());
+    unsigned ev = 0;
+    for (int i = 0; i < 120 && s.boss().sleeping(); ++i) ev |= run(s, {0.0f, -1.0f}, 1);
+    CHECK(ev & kSessionBossIntro);
+    CHECK(Level::isSolid(s.level().tileAt(7, 8)));
+    CHECK(!s.objectiveComplete());
+
+    // Standing still under the leap: the landing hurts.
+    LevelSession stay = s;
+    ev = 0;
+    for (int i = 0; i < 600 && stay.boss().state() != Boss::State::Dazed; ++i) ev |= run(stay, {}, 1);
+    CHECK(ev & kSessionHurt);
+
+    // Stepping away from the shadow, then standing on the ground: the
+    // shockwave ring hurts...
+    auto dodge = [&](bool hop) {
+        LevelSession t = s;
+        unsigned all = 0;
+        while (t.boss().state() != Boss::State::Leap) all |= run(t, {}, 1);
+        all |= run(t, {-1.0f, 0.0f}, 30); // out of the landing zone
+        bool hopped = false;
+        for (int i = 0; i < 180; ++i) {
+            PlayerInput in;
+            for (const Boss::Ring& ring : t.boss().rings()) {
+                const float gap = (t.player().position() - ring.center).length() - ring.radius;
+                if (hop && !hopped && ring.active && ring.delay <= 0.0f && gap > 0.0f && gap < 16.0f) {
+                    in.hopPressed = true;
+                    hopped = true;
+                }
+            }
+            all |= t.update(in, kDt);
+        }
+        return all;
+    };
+    CHECK(dodge(false) & kSessionHurt);
+    // ...but hopping over it is safe.
+    CHECK((dodge(true) & kSessionHurt) == 0);
+}
+
+void testBossStompAndContact() {
+    const Level level = parseOrDie(kArenaMap);
+    LevelSession s(level, Difficulty::Normal);
+    for (int i = 0; i < 120 && s.boss().sleeping(); ++i) run(s, {0.0f, -1.0f}, 1);
+    while (s.boss().state() != Boss::State::Idle) run(s, {}, 1);
+
+    // Bumping into it while it is alert hurts.
+    LevelSession bump = s;
+    bump.player().respawnAt(bump.boss().position() + Vec2{20.0f, 0.0f}, false);
+    CHECK(run(bump, {}, 3) & kSessionHurt);
+
+    // Dizzy: hopping onto it lands a hit and bounces the hero.
+    LevelSession stomp = s;
+    while (stomp.boss().state() != Boss::State::Dazed) run(stomp, {-1.0f, 0.0f}, 1);
+    stomp.player().respawnAt(stomp.boss().position(), false);
+    const int heartsBefore = stomp.hearts();
+    const unsigned ev = run(stomp, {}, 60, 0);
+    CHECK(ev & kSessionBossHit);
+    CHECK(stomp.boss().health() == Boss::kMaxHealth - 1);
+    CHECK(stomp.hearts() == heartsBefore);
+    int have = 0, need = 0;
+    stomp.objectiveProgress(have, need);
+    CHECK(have == 1 && need == Boss::kMaxHealth);
+
+    // A dash works too.
+    LevelSession dash = s;
+    while (dash.boss().state() != Boss::State::Dazed) run(dash, {-1.0f, 0.0f}, 1);
+    // (It followed the hero to the left wall, so dash in from the right.)
+    dash.player().respawnAt(dash.boss().position() + Vec2{50.0f, 0.0f}, false);
+    CHECK(run(dash, {-1.0f, 0.0f}, 20, -1, 0) & kSessionBossHit);
+}
+
+void testBossFightToTheEnd() {
+    const Level level = parseOrDie(kArenaMap);
+    LevelSession s(level, Difficulty::Relaxed);
+    unsigned ev = 0;
+    bool hopIssued = false;
+    for (int i = 0; i < 60 * 240 && !s.boss().defeated(); ++i) {
+        PlayerInput in;
+        const Boss& b = s.boss();
+        if (b.sleeping()) {
+            in.move = {0.0f, -1.0f}; // (back) into the arena
+        } else if (b.state() == Boss::State::Dazed && !hopIssued && s.state() == LevelSession::State::Playing) {
+            s.player().respawnAt(b.position(), false);
+            in.hopPressed = true;
+            hopIssued = true;
+        }
+        if (b.state() != Boss::State::Dazed) hopIssued = false;
+        ev |= s.update(in, kDt);
+    }
+    CHECK(s.boss().defeated());
+    CHECK(ev & kSessionBossDefeated);
+    CHECK(s.level().tileAt(7, 8) == Tile::Ground); // the gate opened again
+    CHECK(s.objectiveComplete());
+    CHECK(s.stats().bossDefeated);
+    CHECK(computeScore(s).foes >= ScoreBreakdown::kBoss);
+
+    // The calm guardian is harmless.
+    s.player().respawnAt(s.boss().position(), false);
+    CHECK((run(s, {}, 30) & kSessionHurt) == 0);
+}
+
+void testBossKnockOutSendsItToSleep() {
+    const Level level = parseOrDie(kArenaMap);
+    LevelSession s(level, Difficulty::Normal);
+    for (int i = 0; i < 120 && s.boss().sleeping(); ++i) run(s, {0.0f, -1.0f}, 1);
+    // Land one hit first.
+    while (s.boss().state() != Boss::State::Dazed) run(s, {-1.0f, 0.0f}, 1);
+    s.player().respawnAt(s.boss().position(), false);
+    run(s, {}, 60, 0);
+    CHECK(s.boss().health() == Boss::kMaxHealth - 1);
+    // Then stand in its way until the hearts run out.
+    unsigned ev = 0;
+    for (int i = 0; i < 60 * 60 && !(ev & kSessionKnockedOut); ++i) {
+        if (s.state() == LevelSession::State::Playing && s.boss().state() == Boss::State::Idle)
+            s.player().respawnAt(s.boss().position() + Vec2{18.0f, 0.0f}, false);
+        ev |= run(s, {}, 1);
+    }
+    CHECK(ev & kSessionKnockedOut);
+    ev = run(s, {}, 120);
+    CHECK(ev & kSessionRespawned);
+    CHECK(s.boss().sleeping());
+    CHECK(s.boss().health() == Boss::kMaxHealth - 1); // the hit you landed still counts
+    CHECK(s.level().tileAt(7, 8) == Tile::Ground);    // gate open again
+}
+
 int main(int, char*[]) {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"key/value parsing", testKeyValueParsing},
         {"menu auto-repeat", testMenuAutoRepeat},
+        {"boss map parsing", testBossMapParsing},
+        {"boss state machine", testBossStateMachine},
+        {"boss arena gates and rings", testBossArenaGatesAndRings},
+        {"boss stomp and contact", testBossStompAndContact},
+        {"boss fight to the end", testBossFightToTheEnd},
+        {"boss knock-out", testBossKnockOutSendsItToSleep},
         {"progress unlocks and records", testProgressUnlocksAndRecords},
         {"high-score table", testHighScoreTable},
         {"outfits", testOutfits},

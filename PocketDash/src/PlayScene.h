@@ -56,6 +56,13 @@ private:
     void finishLevel();
     void updateInitials();
     void renderInitials(SDL_Renderer* r, int y) const;
+    // Boss fight (Boss.h).
+    void renderBossGround(SDL_Renderer* r, Vec2 cam) const; // rings and the landing shadow
+    void renderBoss(SDL_Renderer* r, Vec2 cam) const;
+    void renderHopHint(SDL_Renderer* r, Vec2 cam) const;
+    void renderBossHud(SDL_Renderer* r) const;
+    void renderBossCard(SDL_Renderer* r) const;
+    void renderCelebration(SDL_Renderer* r) const;
 
     std::string levelId_;
     Level level_; // must outlive session_
@@ -80,6 +87,10 @@ private:
     bool highScoreSaved_ = false;
     char initials_[4] = "AAA";
     int initialsCursor_ = 0;
+
+    float bossCard_ = 0.0f;   // boss intro card time left (the hero waits)
+    bool bossIntroSeen_ = false;
+    float celebrate_ = 0.0f;  // boss defeat celebration time left
 };
 
 } // namespace pd

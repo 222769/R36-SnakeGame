@@ -107,7 +107,7 @@ bool parse(const std::string& text, Level& out, std::string* error) {
                     return fail(lineNo, "time_limit must be a number of seconds >= 0");
             } else if (key == "objective") {
                 if (!objectiveFromName(value, objective))
-                    return fail(lineNo, "unknown objective '" + value + "' (exit, coins, stars, rescue, defeat)");
+                    return fail(lineNo, "unknown objective '" + value + "' (exit, coins, stars, rescue, defeat, boss)");
             } else {
                 return fail(lineNo, "unknown key '" + key + "'");
             }
@@ -129,6 +129,7 @@ bool parse(const std::string& text, Level& out, std::string* error) {
     for (size_t i = 0; i < signTexts.size(); ++i) level.signs[i].text = signTexts[i];
 
     // The objective must be possible on this map.
+    if (level.hasBoss && objective != Objective::Boss) return fail(0, "a map with a boss (G) needs objective=boss");
     switch (objective) {
     case Objective::Coins:
         if (goal <= 0 || goal > static_cast<int>(level.coins.size()))
@@ -142,6 +143,9 @@ bool parse(const std::string& text, Level& out, std::string* error) {
         break;
     case Objective::DefeatAll:
         if (level.enemies.empty()) return fail(0, "objective=defeat but the map has no enemies");
+        break;
+    case Objective::Boss:
+        if (!level.hasBoss) return fail(0, "objective=boss but the map has no boss (G)");
         break;
     case Objective::ReachExit: break;
     }
