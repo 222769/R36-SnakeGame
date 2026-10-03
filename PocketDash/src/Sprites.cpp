@@ -1,6 +1,7 @@
 #include "Sprites.h"
 
 #include "Canvas.h"
+#include "Progress.h"
 
 #include <SDL_image.h>
 
@@ -17,17 +18,24 @@ namespace {
 
 // --- Palette: natural, slightly warm colours -----------------------------------
 const Col kSkin = Col::rgb(246, 210, 176);
-const Col kCap = Col::rgb(206, 56, 60);
-const Col kCapDark = Col::rgb(150, 36, 44);
 const Col kHair = Col::rgb(112, 74, 46);
-const Col kJacket = Col::rgb(58, 112, 186);
-const Col kScarf = Col::rgb(242, 176, 52);
 const Col kBoots = Col::rgb(96, 62, 40);
 const Col kPants = Col::rgb(62, 66, 84);
 const Col kEye = Col::rgb(38, 30, 42);
 const Col kWhite = Col::rgb(255, 255, 255);
 const Col kGold = Col::rgb(246, 196, 62);
 const Col kGoldDark = Col::rgb(176, 118, 22);
+
+// The outfit-dependent hero colours.
+struct HeroColors {
+    Col cap, capDark, jacket, scarf;
+};
+Col hexCol(unsigned rgb) { return Col::rgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF); }
+HeroColors heroColors(const Outfit& o) { return {hexCol(o.cap), hexCol(o.capDark), hexCol(o.jacket), hexCol(o.scarf)}; }
+const HeroColors& defaultHero() {
+    static const HeroColors colors = heroColors(outfit(0));
+    return colors;
+}
 
 using Painter = std::function<void(Canvas&)>;
 
@@ -42,7 +50,7 @@ void cheek(Canvas& c, float x, float y, float s) { c.softEllipse(x, y, 2.6f * s,
 // --- Hero -----------------------------------------------------------------------
 // Designed in a 32x40 box (feet on the bottom edge) and scaled by `k`, so the
 // same painter makes the in-game sprite and the large title-screen hero.
-void paintHero(Canvas& c, float ox, float oy, float k, int facing, int frame) {
+void paintHero(Canvas& c, float ox, float oy, float k, int facing, int frame, const HeroColors& hc = defaultHero()) {
     auto P = [&](float x, float y) { return Vec2{ox + x * k, oy + y * k}; };
     auto sphere = [&](float x, float y, float rx, float ry, Col col, float gloss = 0.2f, float amb = 0.55f) {
         const Vec2 p = P(x, y);
@@ -69,16 +77,16 @@ void paintHero(Canvas& c, float ox, float oy, float k, int facing, int frame) {
     sphere(rx + (side ? 1.0f : 0.0f), ry, 3.4f, 2.4f, kBoots, 0.25f);
 
     // Back arm, body (jacket), front arm.
-    if (side) sphere(12.5f, 28.0f, 2.8f, 4.2f, kJacket.scaled(0.8f));
-    sphere(16.0f, 28.5f, side ? 7.4f : 8.6f, 7.2f, kJacket, 0.15f, 0.5f);
+    if (side) sphere(12.5f, 28.0f, 2.8f, 4.2f, hc.jacket.scaled(0.8f));
+    sphere(16.0f, 28.5f, side ? 7.4f : 8.6f, 7.2f, hc.jacket, 0.15f, 0.5f);
     if (!side) {
-        sphere(7.6f, 28.0f, 2.9f, 4.3f, kJacket.scaled(0.9f));
-        sphere(24.4f, 28.0f, 2.9f, 4.3f, kJacket.scaled(0.9f));
+        sphere(7.6f, 28.0f, 2.9f, 4.3f, hc.jacket.scaled(0.9f));
+        sphere(24.4f, 28.0f, 2.9f, 4.3f, hc.jacket.scaled(0.9f));
         sphere(7.4f, 32.0f, 2.2f, 2.2f, kSkin, 0.1f, 0.6f);
         sphere(24.6f, 32.0f, 2.2f, 2.2f, kSkin, 0.1f, 0.6f);
-        if (!back) line(16.0f, 24.5f, 16.0f, 34.0f, 0.8f, kJacket.scaled(0.6f)); // zip
+        if (!back) line(16.0f, 24.5f, 16.0f, 34.0f, 0.8f, hc.jacket.scaled(0.6f)); // zip
     } else {
-        sphere(18.0f, 28.5f, 2.8f, 4.3f, kJacket.scaled(0.95f));
+        sphere(18.0f, 28.5f, 2.8f, 4.3f, hc.jacket.scaled(0.95f));
         sphere(18.6f, 32.4f, 2.2f, 2.2f, kSkin, 0.1f, 0.6f);
     }
     if (back) { // backpack
@@ -88,8 +96,8 @@ void paintHero(Canvas& c, float ox, float oy, float k, int facing, int frame) {
     }
 
     // Scarf.
-    sphere(side ? 15.0f : 16.0f, 22.4f, side ? 7.0f : 8.0f, 2.6f, kScarf, 0.25f, 0.6f);
-    if (!back) sphere(side ? 11.0f : 20.5f, 25.0f, 1.8f, 2.6f, kScarf.scaled(0.9f));
+    sphere(side ? 15.0f : 16.0f, 22.4f, side ? 7.0f : 8.0f, 2.6f, hc.scarf, 0.25f, 0.6f);
+    if (!back) sphere(side ? 11.0f : 20.5f, 25.0f, 1.8f, 2.6f, hc.scarf.scaled(0.9f));
 
     // Head.
     const float hx = side ? 15.5f : 16.0f;
@@ -123,14 +131,14 @@ void paintHero(Canvas& c, float ox, float oy, float k, int facing, int frame) {
     }
 
     // Cap: a shiny dome with a brim (pointing forward when seen from the side).
-    sphere(hx, 8.6f, side ? 9.8f : 10.6f, 6.4f, kCap, 0.45f, 0.55f);
-    if (side) ellipse(24.0f, 11.6f, 6.4f, 1.9f, kCapDark);
-    else if (!back) ellipse(16.0f, 12.0f, 11.2f, 2.4f, kCapDark);
-    else ellipse(16.0f, 11.4f, 10.4f, 1.6f, kCapDark.scaled(0.9f));
+    sphere(hx, 8.6f, side ? 9.8f : 10.6f, 6.4f, hc.cap, 0.45f, 0.55f);
+    if (side) ellipse(24.0f, 11.6f, 6.4f, 1.9f, hc.capDark);
+    else if (!back) ellipse(16.0f, 12.0f, 11.2f, 2.4f, hc.capDark);
+    else ellipse(16.0f, 11.4f, 10.4f, 1.6f, hc.capDark.scaled(0.9f));
     if (!back) {
         const Vec2 badge = P(side ? 17.0f : 16.0f, 6.6f);
         c.fillCircle(badge.x, badge.y, 2.0f * k, kWhite.withAlpha(0.95f));
-        c.fillCircle(badge.x, badge.y, 1.1f * k, kCap);
+        c.fillCircle(badge.x, badge.y, 1.1f * k, hc.cap);
     }
 }
 
@@ -497,6 +505,33 @@ bool Sprites::validateBuiltinArt(std::string* error) {
     return true;
 }
 
+bool Sprites::setOutfit(SDL_Renderer* renderer, int outfitIndex) {
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
+    const HeroColors colors = heroColors(outfit(outfitIndex));
+    if (!playerOverridden_) {
+        const int sheetW = kPlayerFrameW * kPlayerFrames;
+        const int sheetH = kPlayerFrameH * kPlayerRows;
+        SurfacePtr sheet = makeSurface(sheetW, sheetH);
+        if (!sheet) return false;
+        const int facing[kPlayerRows] = {0, 1, 2};
+        for (int row = 0; row < kPlayerRows; ++row)
+            for (int f = 0; f < kPlayerFrames; ++f)
+                cell(sheet.get(), f * kPlayerFrameW, row * kPlayerFrameH, kPlayerFrameW, kPlayerFrameH,
+                     [&](Canvas& c) { paintHero(c, 0, 0, 1.0f, facing[row], f, colors); });
+        player_ = toTexture(renderer, sheet.get());
+    }
+
+    // Large hero for the title screen, painted at 2.5x rather than scaled up.
+    SurfacePtr big = makeSurface(kHeroLargeW * 2, kHeroLargeH);
+    if (!big) return false;
+    for (int f = 0; f < 2; ++f)
+        cell(big.get(), f * kHeroLargeW, 0, kHeroLargeW, kHeroLargeH,
+             [&](Canvas& c) { paintHero(c, 0, 0, static_cast<float>(kHeroLargeW) / kPlayerFrameW, 0, f, colors); });
+    heroLarge_ = toTexture(renderer, big.get());
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+    return player_ && heroLarge_;
+}
+
 bool Sprites::create(SDL_Renderer* renderer, const std::string& spriteDir) {
     // Smooth art is drawn with linear filtering, so anything shown slightly
     // scaled (pulsing hearts, the stars on the results panel) stays smooth.
@@ -505,24 +540,21 @@ bool Sprites::create(SDL_Renderer* renderer, const std::string& spriteDir) {
     const int sheetW = kPlayerFrameW * kPlayerFrames;
     const int sheetH = kPlayerFrameH * kPlayerRows;
     player_ = loadOverride(renderer, spriteDir, "player", sheetW, sheetH);
-    if (!player_) {
-        SurfacePtr sheet = makeSurface(sheetW, sheetH);
-        if (!sheet) return false;
-        const int facing[kPlayerRows] = {0, 1, 2};
-        for (int row = 0; row < kPlayerRows; ++row)
-            for (int f = 0; f < kPlayerFrames; ++f)
-                cell(sheet.get(), f * kPlayerFrameW, row * kPlayerFrameH, kPlayerFrameW, kPlayerFrameH,
-                     [&](Canvas& c) { paintHero(c, 0, 0, 1.0f, facing[row], f); });
-        player_ = toTexture(renderer, sheet.get());
-    }
+    playerOverridden_ = player_ != nullptr;
+    if (!setOutfit(renderer, 0)) return false;
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
 
-    // Large hero for the title screen, painted at 2.5x rather than scaled up.
+    // One front-facing preview per outfit for the collection screen, painted
+    // at 2x.
     {
-        SurfacePtr big = makeSurface(kHeroLargeW * 2, kHeroLargeH);
-        for (int f = 0; f < 2; ++f)
-            cell(big.get(), f * kHeroLargeW, 0, kHeroLargeW, kHeroLargeH,
-                 [&](Canvas& c) { paintHero(c, 0, 0, static_cast<float>(kHeroLargeW) / kPlayerFrameW, 0, f); });
-        heroLarge_ = toTexture(renderer, big.get());
+        SurfacePtr sheet = makeSurface(kOutfitPreviewW * kOutfitCount, kOutfitPreviewH);
+        if (!sheet) return false;
+        for (int i = 0; i < kOutfitCount; ++i) {
+            const HeroColors colors = heroColors(outfit(i));
+            cell(sheet.get(), i * kOutfitPreviewW, 0, kOutfitPreviewW, kOutfitPreviewH,
+                 [&](Canvas& c) { paintHero(c, 0, 0, static_cast<float>(kOutfitPreviewW) / kPlayerFrameW, 0, 0, colors); });
+        }
+        outfitPreviews_ = toTexture(renderer, sheet.get());
     }
 
     heartFull_ = loadOverride(renderer, spriteDir, "heart_full", kHeartW, kHeartH);
@@ -585,7 +617,8 @@ bool Sprites::create(SDL_Renderer* renderer, const std::string& spriteDir) {
         items_ = toTexture(renderer, sheet.get());
     }
 
-    const bool ok = player_ && heroLarge_ && heartFull_ && heartEmpty_ && coin_ && enemies_ && checkpoint_ && items_;
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+    const bool ok = player_ && heroLarge_ && outfitPreviews_ && heartFull_ && heartEmpty_ && coin_ && enemies_ && checkpoint_ && items_;
     if (!ok) SDL_Log("[sprites] Failed to create sprites: %s", SDL_GetError());
     return ok;
 }

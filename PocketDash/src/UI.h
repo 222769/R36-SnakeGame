@@ -81,6 +81,11 @@ constexpr SDL_Color kPanelBorder{255, 255, 255, 200};
 // optional 2 px border (alpha 0 = none).
 void drawPanel(SDL_Renderer* r, const SDL_Rect& rect, SDL_Color fill = kPanel, SDL_Color border = kPanelBorder);
 
+// "1:05.3" (tenths) or "1:05" clock text.
+void formatTime(char* out, size_t size, float seconds, bool tenths);
+// "12,345" score text.
+void formatScore(char* out, size_t size, int score);
+
 // Full-screen translucent dim, e.g. behind the pause menu.
 void dimScreen(SDL_Renderer* r, Uint8 alpha);
 

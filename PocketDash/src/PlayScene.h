@@ -3,6 +3,8 @@
 #include "Camera.h"
 #include "Level.h"
 #include "LevelSession.h"
+#include "Progress.h"
+#include "Score.h"
 #include "Scene.h"
 #include "TileSet.h"
 
@@ -49,6 +51,11 @@ private:
     // Banner/info subtitle for the objective, e.g. "RESCUE 3 FRIENDS!".
     void objectiveText(char* out, size_t size) const;
     void goToNextLevel();
+    void leaveToMap();
+    // Scores the cleared run and updates the records (once per clear).
+    void finishLevel();
+    void updateInitials();
+    void renderInitials(SDL_Renderer* r, int y) const;
 
     std::string levelId_;
     Level level_; // must outlive session_
@@ -64,6 +71,15 @@ private:
     char toast_[64] = {};
     float toastTime_ = 0.0f;  // seconds left on screen
     int signIndex_ = -1;      // sign being read
+
+    // Results of the last clear.
+    ScoreBreakdown score_;
+    RecordUpdate record_;
+    float previousBestTime_ = 0.0f;
+    bool enteringInitials_ = false;
+    bool highScoreSaved_ = false;
+    char initials_[4] = "AAA";
+    int initialsCursor_ = 0;
 };
 
 } // namespace pd

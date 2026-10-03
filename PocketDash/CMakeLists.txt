@@ -46,23 +46,31 @@ endif()
 # ---------------------------------------------------------------------------
 set(POCKETDASH_CORE_SOURCES
     src/AudioManager.cpp
+    src/Backdrop.cpp
     src/BuiltinLevels.cpp
     src/Canvas.cpp
     src/Camera.cpp
     src/Collectibles.cpp
+    src/CollectionScene.cpp
     src/Draw.cpp
     src/Effects.cpp
     src/Enemy.cpp
     src/Game.cpp
+    src/HighScoresScene.cpp
     src/InputManager.cpp
     src/Level.cpp
     src/LevelLoader.cpp
+    src/LevelSelectScene.cpp
     src/LevelSession.cpp
+    src/Menu.cpp
     src/Platform.cpp
     src/Player.cpp
+    src/Progress.cpp
     src/PlayScene.cpp
     src/PowerUp.cpp
     src/SaveManager.cpp
+    src/Score.cpp
+    src/SettingsScene.cpp
     src/Sprites.cpp
     src/TileSet.cpp
     src/TitleScene.cpp
@@ -125,6 +133,11 @@ if(POCKETDASH_BUILD_TESTS)
     # Runs the real game loop headless with scripted input.
     add_test(NAME smoke_test COMMAND pocketdash --smoke-test)
     set_tests_properties(smoke_test PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;POCKETDASH_DATA=${CMAKE_CURRENT_SOURCE_DIR}")
+
+    # Walks through every menu screen with scripted input.
+    add_test(NAME menu_test COMMAND pocketdash --menu-test)
+    set_tests_properties(menu_test PROPERTIES
         ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;POCKETDASH_DATA=${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 

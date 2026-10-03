@@ -68,7 +68,14 @@ public:
 
     // Loads bindings; missing file = built-in defaults.
     void loadConfig(const std::string& path);
+    // Applies a second config on top (e.g. save/controller.cfg written by the
+    // remap screen). Missing file = no change.
+    void loadOverrides(const std::string& path);
     const InputBindings& bindings() const { return bindings_; }
+    // Replaces the bindings (remap screen). Held pad buttons are released.
+    void setBindings(const InputBindings& bindings);
+    // Writes the pad button numbers to `path` in controller.cfg format.
+    bool saveButtonBindings(const std::string& path) const;
 
     // Opens every joystick currently connected (hot-plug is handled through
     // events afterwards). Requires SDL_INIT_JOYSTICK.
@@ -83,6 +90,11 @@ public:
 
     bool down(Action a) const;
     bool pressed(Action a) const { return latched_[idx(a)]; }
+    // Menu navigation: true on the press, then repeatedly while held
+    // (after kRepeatDelay steps, every kRepeatInterval steps).
+    bool repeated(Action a) const;
+    static constexpr int kRepeatDelay = 24;    // 0.4 s at 60 Hz
+    static constexpr int kRepeatInterval = 6;  // 10 per second
 
     // Combined movement vector (length <= 1). Digital inputs win over the
     // analogue stick; the stick keeps its magnitude for gentle walking.
@@ -100,6 +112,8 @@ public:
     int hatValue() const { return hat_; }
     int axisValue(int axis) const;
     int lastPressedButton() const { return lastButton_; }
+    // Raw joystick button pressed since the last call, or -1 (remap screen).
+    int takeRawButtonPress();
 
 private:
     static constexpr int idx(Action a) { return static_cast<int>(a); }
@@ -122,6 +136,7 @@ private:
     SourceArray axisDown_{};
     SourceArray injected_{};
     std::array<bool, kActionCount> latched_{};
+    std::array<int, kActionCount> heldSteps_{};
 
     struct OpenJoystick {
         SDL_JoystickID id;
@@ -134,6 +149,7 @@ private:
     std::array<int, kMaxAxes> axes_{};
     int hat_ = 0;
     int lastButton_ = -1;
+    int rawPress_ = -1;
 };
 
 } // namespace pd

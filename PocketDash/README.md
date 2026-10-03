@@ -6,19 +6,26 @@ native ARM Linux executable, and it also runs on a normal PC for development.
 
 > **Pick up and play in seconds.**
 
-**Status:** Phases 1–5 of 8 are complete. World 1 has 8 levels loaded from
+**Status:** Phases 1–6 of 8 are complete. World 1 has 8 levels loaded from
 data files, with objectives (coins, stars, rescues, timed runs), signs,
 rafts, keys and secrets. It also has enemies, hearts, checkpoints, the three
-difficulties, eight power-ups and breakable blocks. See [TODO.md](TODO.md)
-for the roadmap.
+difficulties, eight power-ups and breakable blocks. The game has a main
+menu, a level-select map, scores with high-score tables, settings
+(including a controller test and button remapping), saves, and a collection
+of outfits unlocked with gems. See [TODO.md](TODO.md) for the roadmap.
 
 ![Title screen](docs/title.png)
+![Main menu](docs/main_menu.png)
+![Level select](docs/level_select.png)
 ![Gameplay](docs/gameplay.png)
 ![Enemies](docs/enemies.png)
 ![Power-ups](docs/powerups.png)
 ![Signs](docs/signs.png)
 ![Lost friends](docs/lost_friends.png)
 ![Level clear](docs/level_clear.png)
+![High scores](docs/high_scores.png)
+![Settings](docs/settings.png)
+![Collection](docs/collection.png)
 
 ## How to play
 
@@ -35,8 +42,10 @@ for the roadmap.
   restart point.
 * **No game over.** Run out of hearts and you go back to the last
   checkpoint with full health, keeping your coins.
-* **Find the three hidden stars** in every level, and the rare gems. Get
+* **Find the three hidden stars** in every level, and its hidden gem. Get
   every star, coin and gem in one run to earn the **Golden Star**.
+* **Gems unlock outfits** for the hero on the **Collection** screen. Gems are
+  never spent: finding 1, 2, 4, 6 and all 8 gems unlocks a new outfit.
 * **Power-ups** float in bubbles. You hold one at a time and press **X**
   to use it:
 
@@ -62,8 +71,42 @@ for the roadmap.
 **Difficulty:** *Relaxed* gives 5 hearts, slower enemies and extra checkpoints.
 *Normal* is the default. *Challenge* has faster enemies, fewer checkpoints and
 a higher score multiplier. Every level and secret is available on all three.
-Set it with `--difficulty relaxed|normal|challenge` (the settings menu comes
-in Phase 6).
+Change it in **Settings** (it applies from the next level), or with
+`--difficulty relaxed|normal|challenge`.
+
+### Menus, scores and saves
+
+* **Main menu:** Play (continues at your first unfinished level), Level
+  Select, Collection, High Scores, Settings and Quit. Held directions
+  repeat, so long lists are quick to scroll.
+* **Level select:** World 1 as a map. A level opens when the one before it
+  is cleared. Each stop shows the stars you have found and a gold star for a
+  Golden Star run. The panel below shows your best score, best time, and the
+  stars, gems and secrets you have found. Press **X** for that level's high
+  scores.
+* **Score** at the end of a level:
+
+  | What               | Points                                   |
+  |--------------------|------------------------------------------|
+  | Coin               | 10 (Double Coins counts them twice)      |
+  | Enemy              | 50                                       |
+  | Star               | 500                                      |
+  | Secret             | 300                                      |
+  | Heart left         | 200                                      |
+  | Time bonus         | 10 per second under par (the time limit, or 2:00) |
+  | Golden Star        | 2,000                                    |
+
+  The total is multiplied by the difficulty: ×1.5 on Challenge.
+* **High scores:** each level keeps a top 5. A score that makes the table
+  asks for three initials: Up/Down changes the letter, and A moves on.
+* **Settings:** music and effects volume, screen shake, difficulty, a
+  **controller test** (every action lights up, with raw button numbers; hold
+  B to leave), **remap buttons**, reset buttons, and **erase save data**
+  (hold A for 2 seconds).
+* **Saves** go to `save/` next to the game: `settings.ini`, `progress.ini`
+  (unlocks, records, high scores, gems, outfit) and `controller.cfg` (only if
+  you remapped buttons). Files are written atomically, so switching off
+  mid-save cannot corrupt them.
 
 ---
 
@@ -118,6 +161,15 @@ handhelds. If a button does the wrong thing:
    `AXES` lines show the d-pad and stick.
 3. Put that number in `controller.cfg`. You don't need to recompile.
 
+You can also do this in the game: **Settings → Controller Test** shows every
+action and the raw button numbers. **Settings → Remap Buttons** asks you to
+press each button in turn. If no button is pressed within 5 seconds, the
+current one is kept; this lets you skip d-pads that report as a hat. The new
+layout is only kept if you confirm it with the new A button within 8
+seconds; otherwise the old buttons come back. Remapped buttons are saved to
+`save/controller.cfg`, which is applied on top of `config/controller.cfg`.
+**Reset Buttons** removes it.
+
 At startup the game also logs the joystick name, GUID, button, axis and hat
 counts, and SDL's own mapping string for the device. Under ArkOS this log goes
 to `log.txt`.
@@ -168,12 +220,26 @@ cd build && ctest --output-on-failure
   stars, and keep every coin, star, friend, key and the exit reachable using
   only abilities that level provides.
 * `smoke_test` runs the real game loop headless (`SDL_VIDEODRIVER=dummy`). It
-  plays a scripted run: title → walk (collecting coins) → dash → hop → pause
-  → resume → debug-warp → walk into the flag. It checks each step, including
-  that the level clears.
+  plays a scripted run: title → menu → walk (collecting coins) → dash → hop
+  → pause → resume → debug-warp → walk into the flag. It checks each step,
+  including that the level clears.
+* `menu_test` walks through every menu screen headless. It covers level
+  select (including a locked level), high scores, collection, every settings
+  page (volume, controller test, remap without a controller, erase), the
+  pause menu and the way back. It checks which screen is showing at each
+  step.
+* The unit tests also cover scoring, progress records, level unlocking, the
+  high-score table, outfits and `progress.ini` round trips (including
+  damaged files).
+
+Automated runs (`--smoke-test`, `--menu-test`, `--frames N`) use default
+settings and empty progress, and never write to `save/`.
 
 To get screenshots without a display:
-`SDL_VIDEODRIVER=dummy ./build/pocketdash --windowed --scale 1 --frames 60 --screenshot shot.png`
+`SDL_VIDEODRIVER=dummy ./build/pocketdash --windowed --scale 1 --frames 60 --screenshot shot.png`.
+Add `--scene levels` (or `menu`, `scores`, `settings`, `controls`,
+`collection`) to start on a menu screen, and `--demo-progress` to fill it
+with sample records.
 
 ### Windows
 
@@ -258,7 +324,15 @@ PocketDash/
 │   ├── InputManager.*      keyboard + raw joystick → logical actions, config loading
 │   ├── Player.*            movement, dash, hop, knockback, rendering
 │   ├── Scene.h             scene interface
-│   ├── TitleScene.*        title screen (main menu in Phase 6)
+│   ├── TitleScene.*        title screen and main menu
+│   ├── LevelSelectScene.*  World 1 map: unlocks, stars, records
+│   ├── HighScoresScene.*   per-level top-5 tables
+│   ├── SettingsScene.*     options, controller test, button remap, erase save
+│   ├── CollectionScene.*   gems found and outfits
+│   ├── Menu.*              shared menu rows, header, hint bar, auto-repeat navigation
+│   ├── Backdrop.*          painted meadow behind the title and menus
+│   ├── Score.*             end-of-level score breakdown
+│   ├── Progress.*          records, unlocks, high scores, outfits (no SDL)
 │   ├── PlayScene.*         gameplay presentation: camera, sound, HUD, pause, results
 │   ├── LevelSession.*      gameplay simulation (no SDL): rules, damage, checkpoints
 │   ├── Enemy.*             slime / beetle / mushroom behaviours and drawing
@@ -272,7 +346,7 @@ PocketDash/
 │   ├── Collectibles.*      coins (with magnet), stars, gems, power-up bubbles, hearts
 │   ├── Effects.*           fixed-size pool of sparkles and dust
 │   ├── AudioManager.*      SDL2_mixer wrapper, silent when audio/files are missing
-│   ├── SaveManager.*       INI-style key=value store, settings persistence
+│   ├── SaveManager.*       INI-style key=value store; settings, progress and button files
 │   ├── Canvas.*            software painter: anti-aliased shapes, shading, tileable noise
 │   ├── Sprites.*           procedurally painted sprites (PNG overrides)
 │   ├── UI.*                TTF font atlases (pixel-font fallback), panels

@@ -11,7 +11,9 @@
 #include "Level.h"
 #include "Player.h"
 #include "PowerUp.h"
+#include "Progress.h"
 #include "SaveManager.h"
+#include "Score.h"
 #include "Sprites.h"
 #include "UI.h"
 #include "World.h"
@@ -1411,9 +1413,175 @@ void testCoinObjective() {
 
 } // namespace
 
+
+// --- Phase 6: menus, progress, scores ------------------------------------------
+
+void testMenuAutoRepeat() {
+    InputManager input;
+    input.setInjected(Action::Down, true);
+    int fires = 0;
+    int firstRepeat = -1;
+    for (int step = 0; step < 60; ++step) {
+        if (input.repeated(Action::Down)) {
+            ++fires;
+            if (step > 0 && firstRepeat < 0) firstRepeat = step;
+        }
+        input.endUpdateStep();
+    }
+    // The press, then every kRepeatInterval steps after kRepeatDelay.
+    CHECK(firstRepeat == InputManager::kRepeatDelay);
+    CHECK(fires == 1 + (60 - 1 - InputManager::kRepeatDelay) / InputManager::kRepeatInterval + 1);
+    input.setInjected(Action::Down, false);
+    input.endUpdateStep();
+    CHECK(!input.repeated(Action::Down));
+}
+
+void testProgressUnlocksAndRecords() {
+    Progress p;
+    CHECK(p.isUnlocked("1-1"));
+    CHECK(!p.isUnlocked("1-2"));
+    CHECK(p.isUnlocked("test")); // not on the map: always playable
+    CHECK(p.continueLevel(1) == "1-1");
+
+    RecordUpdate u = p.recordClear("1-1", ClearResult{1000, 50.0f, 0x5u, 1, 0, false});
+    CHECK(u.firstClear && !u.newBestScore && !u.newBestTime);
+    CHECK(u.newStars && u.newGems && !u.newGolden);
+    CHECK(u.highScoreRank == 0);
+    CHECK(p.isUnlocked("1-2") && !p.isUnlocked("1-3"));
+    CHECK(p.continueLevel(1) == "1-2");
+
+    u = p.recordClear("1-1", ClearResult{900, 40.0f, 0x2u, 1, 1, true});
+    CHECK(!u.firstClear && !u.newBestScore && u.newBestTime && u.newStars && !u.newGems && u.newGolden);
+    const LevelRecord& rec = p.record("1-1");
+    CHECK(rec.bestScore == 1000);
+    CHECK_NEAR(rec.bestTime, 40.0f, 1e-4f);
+    CHECK(rec.starsMask == 0x7u);
+    CHECK(rec.secrets == 1 && rec.goldenStar);
+    CHECK(p.totalStars() == 3 && p.totalGems() == 1 && p.levelsCleared() == 1 && p.goldenStars() == 1);
+    u = p.recordClear("1-1", ClearResult{1200, 45.0f, 0, 0, 0, false});
+    CHECK(u.newBestScore && !u.newBestTime);
+
+    // Everything cleared: "Play" resumes at the last level.
+    Progress all;
+    for (const auto& id : levels::worldLevelIds(1)) all.recordClear(id, ClearResult{10, 10.0f, 0, 0, 0, false});
+    CHECK(all.continueLevel(1) == levels::worldLevelIds(1).back());
+}
+
+void testHighScoreTable() {
+    Progress p;
+    CHECK(p.highScoreRank("1-1", 0) == -1); // zero never ranks
+    for (int i = 5; i >= 1; --i) p.addHighScore("1-1", "abc", i * 100);
+    const auto& t = p.record("1-1").highScores;
+    CHECK(t.size() == 5);
+    CHECK(t.front().score == 500 && t.back().score == 100);
+    CHECK(t.front().initials == "ABC");
+    CHECK(p.highScoreRank("1-1", 50) == -1);
+    CHECK(p.highScoreRank("1-1", 600) == 0);
+    CHECK(p.highScoreRank("1-1", 300) == 3); // ties go below the existing entry
+    p.addHighScore("1-1", "zed", 350);
+    CHECK(t.size() == 5 && t[2].score == 350 && t[2].initials == "ZED" && t.back().score == 200);
+    CHECK(p.lastInitials() == "ZED");
+    CHECK(sanitizeInitials("ab") == "ABA");
+    CHECK(sanitizeInitials("z9q!x") == "ZQX");
+    CHECK(sanitizeInitials("") == "AAA");
+}
+
+void testOutfits() {
+    Progress p;
+    CHECK(p.outfitUnlocked(0));
+    CHECK(!p.outfitUnlocked(1));
+    p.selectOutfit(1); // locked: ignored
+    CHECK(p.selectedOutfit() == 0);
+    p.recordClear("1-1", ClearResult{10, 10.0f, 0, outfit(1).gemsNeeded, 0, false});
+    CHECK(p.outfitUnlocked(1));
+    p.selectOutfit(1);
+    CHECK(p.selectedOutfit() == 1);
+    CHECK(!p.outfitUnlocked(kOutfitCount)); // out of range
+    for (int i = 1; i < kOutfitCount; ++i) CHECK(outfit(i).gemsNeeded >= outfit(i - 1).gemsNeeded);
+
+    // World 1 must hold enough gems to unlock every outfit.
+    int gems = 0;
+    for (const auto& id : levels::worldLevelIds(1)) {
+        Level level;
+        std::string error;
+        const std::string path = std::string(POCKETDASH_SOURCE_DIR) + "/assets/levels/" + id + ".lvl";
+        CHECK(levels::loadFile(path, level, &error));
+        gems += static_cast<int>(level.gems.size());
+    }
+    CHECK(gems >= outfit(kOutfitCount - 1).gemsNeeded);
+}
+
+void testProgressRoundTrip() {
+    Progress p;
+    p.recordClear("1-1", ClearResult{1234, 61.25f, 0x3u, 1, 1, true});
+    p.recordClear("1-2", ClearResult{777, 90.0f, 0x1u, 0, 0, false});
+    p.addHighScore("1-1", "AMY", 1234);
+    p.addHighScore("1-1", "BOB", 999);
+    p.selectOutfit(1);
+
+    KeyValueStore out;
+    p.save(out);
+    KeyValueStore in;
+    in.parse(out.serialize());
+    Progress q;
+    q.load(in);
+    const LevelRecord& a = q.record("1-1");
+    CHECK(a.cleared && a.bestScore == 1234 && a.starsMask == 0x3u && a.gems == 1 && a.secrets == 1 && a.goldenStar);
+    CHECK_NEAR(a.bestTime, 61.25f, 0.002f);
+    CHECK(a.highScores.size() == 2 && a.highScores[0].initials == "AMY" && a.highScores[1].score == 999);
+    CHECK(q.record("1-2").cleared && q.record("1-2").bestScore == 777);
+    CHECK(!q.record("1-3").cleared);
+    CHECK(q.selectedOutfit() == 1);
+    CHECK(q.lastInitials() == "BOB");
+
+    // Through the save folder (progress.ini), as the game does it.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "pocketdash_progress_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    SaveManager save(dir.string() + "/");
+    CHECK(save.loadProgress().levelsCleared() == 0); // no file yet: fresh progress
+    CHECK(save.saveProgress(p));
+    CHECK(std::filesystem::exists(dir / "progress.ini"));
+    const Progress f = save.loadProgress();
+    CHECK(f.record("1-1").bestScore == 1234 && f.levelsCleared() == 2 && f.selectedOutfit() == 1);
+    std::filesystem::remove_all(dir);
+
+    // Damaged files load what they can.
+    KeyValueStore bad;
+    bad.parse("level.1-1.cleared=1\nlevel.1-1.best_score=lots\nlevel.1-1.hs1=ZZ\nlevel.1-1.hs2=QQQ -5\noutfit=99\n");
+    Progress r;
+    r.load(bad);
+    CHECK(r.record("1-1").cleared && r.record("1-1").bestScore == 0 && r.record("1-1").highScores.empty());
+    CHECK(r.selectedOutfit() == 0);
+}
+
+void testScoreBreakdown() {
+    Level level;
+    std::string error;
+    CHECK(makeTestLevel(level, &error));
+    LevelSession normal(level, Difficulty::Normal);
+    const ScoreBreakdown s = computeScore(normal);
+    CHECK(s.coins == 0 && s.foes == 0 && s.stars == 0 && s.golden == 0);
+    CHECK(s.hearts == normal.maxHearts() * ScoreBreakdown::kHeart);
+    const float par = level.timeLimit > 0.0f ? level.timeLimit : ScoreBreakdown::kDefaultPar;
+    CHECK(s.time == static_cast<int>(par) * ScoreBreakdown::kPerSecond);
+    CHECK(s.total() == s.subtotal());
+
+    LevelSession hard(level, Difficulty::Challenge);
+    const ScoreBreakdown h = computeScore(hard);
+    CHECK(h.multiplier > 1.0f);
+    CHECK(h.total() == static_cast<int>(std::lround(h.subtotal() * h.multiplier)));
+}
+
 int main(int, char*[]) {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"key/value parsing", testKeyValueParsing},
+        {"menu auto-repeat", testMenuAutoRepeat},
+        {"progress unlocks and records", testProgressUnlocksAndRecords},
+        {"high-score table", testHighScoreTable},
+        {"outfits", testOutfits},
+        {"progress round trip", testProgressRoundTrip},
+        {"score breakdown", testScoreBreakdown},
         {"key/value round trip", testKeyValueRoundTrip},
         {"settings round trip", testSettingsRoundTrip},
         {"bindings from config", testBindingsFromConfig},

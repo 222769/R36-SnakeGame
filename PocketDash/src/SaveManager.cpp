@@ -160,4 +160,19 @@ bool SaveManager::saveSettings(const Settings& s) const {
     return ok;
 }
 
+Progress SaveManager::loadProgress() const {
+    Progress p;
+    KeyValueStore kv;
+    if (kv.loadFromFile(saveDir_ + "progress.ini")) p.load(kv);
+    return p;
+}
+
+bool SaveManager::saveProgress(const Progress& progress) const {
+    KeyValueStore kv;
+    progress.save(kv);
+    const bool ok = kv.saveToFile(saveDir_ + "progress.ini");
+    if (!ok) SDL_Log("[save] Failed to write %sprogress.ini", saveDir_.c_str());
+    return ok;
+}
+
 } // namespace pd

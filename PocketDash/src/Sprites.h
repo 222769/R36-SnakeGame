@@ -29,6 +29,9 @@ public:
     // Big hero portrait for the title screen: 2 frames side by side.
     static constexpr int kHeroLargeW = 80;
     static constexpr int kHeroLargeH = 100;
+    // Outfit previews (collection screen): one 64x80 frame per outfit.
+    static constexpr int kOutfitPreviewW = 64;
+    static constexpr int kOutfitPreviewH = 80;
 
     // Coin sheet: 3 frames of 24x24 in a row (full, turning, edge-on).
     static constexpr int kCoinSize = 24;
@@ -53,9 +56,13 @@ public:
     static constexpr int itemFrame(PowerUpType t) { return 2 + static_cast<int>(t); }
 
     bool create(SDL_Renderer* renderer, const std::string& spriteDir);
+    // Repaints the hero (game sheet unless replaced by a PNG, and the title
+    // hero) in an outfit from Progress.h.
+    bool setOutfit(SDL_Renderer* renderer, int outfitIndex);
 
     SDL_Texture* player() const { return player_.get(); }
     SDL_Texture* heroLarge() const { return heroLarge_.get(); }
+    SDL_Texture* outfitPreviews() const { return outfitPreviews_.get(); }
     SDL_Texture* heartFull() const { return heartFull_.get(); }
     SDL_Texture* heartEmpty() const { return heartEmpty_.get(); }
     SDL_Texture* coin() const { return coin_.get(); }
@@ -70,6 +77,8 @@ public:
 private:
     TexturePtr player_;
     TexturePtr heroLarge_;
+    TexturePtr outfitPreviews_;
+    bool playerOverridden_ = false;
     TexturePtr heartFull_;
     TexturePtr heartEmpty_;
     TexturePtr coin_;

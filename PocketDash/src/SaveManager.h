@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Progress.h"
 #include "Settings.h"
 
 #include <string>
@@ -40,8 +41,8 @@ private:
     std::vector<std::pair<std::string, std::string>> entries_;
 };
 
-// Owns the on-disk save files. Phase 1 persists settings; level progress,
-// collectibles and high scores are added in Phase 6.
+// Owns the on-disk save files: settings.ini (options), progress.ini (level
+// records, high scores, gems, outfit) and controller.cfg (remapped buttons).
 class SaveManager {
 public:
     explicit SaveManager(std::string saveDir = {});
@@ -50,6 +51,11 @@ public:
 
     Settings loadSettings() const;
     bool saveSettings(const Settings& settings) const;
+
+    Progress loadProgress() const;
+    bool saveProgress(const Progress& progress) const;
+
+    std::string controllerOverridePath() const { return saveDir_ + "controller.cfg"; }
 
 private:
     std::string saveDir_;

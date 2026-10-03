@@ -242,7 +242,10 @@ void InputManager::handleEvent(const SDL_Event& e) {
         const int button = e.jbutton.button;
         const bool isDown = e.jbutton.state == SDL_PRESSED;
         if (button < kMaxButtons) rawButtons_[button] = isDown;
-        if (isDown) lastButton_ = button;
+        if (isDown) {
+            lastButton_ = button;
+            rawPress_ = button;
+        }
         for (int i = 0; i < kActionCount; ++i)
             if (bindings_.padButton[i] == button) setSource(padDown_, static_cast<Action>(i), isDown);
         break;
@@ -290,7 +293,47 @@ void InputManager::updateAxis(int axis, int value) {
     }
 }
 
-void InputManager::endUpdateStep() { latched_.fill(false); }
+void InputManager::endUpdateStep() {
+    latched_.fill(false);
+    for (int i = 0; i < kActionCount; ++i) heldSteps_[i] = down(static_cast<Action>(i)) ? heldSteps_[i] + 1 : 0;
+}
+
+bool InputManager::repeated(Action a) const {
+    if (pressed(a)) return true;
+    const int held = heldSteps_[idx(a)];
+    return held >= kRepeatDelay && (held - kRepeatDelay) % kRepeatInterval == 0;
+}
+
+int InputManager::takeRawButtonPress() {
+    const int b = rawPress_;
+    rawPress_ = -1;
+    return b;
+}
+
+void InputManager::loadOverrides(const std::string& path) {
+    KeyValueStore kv;
+    if (!kv.loadFromFile(path)) return;
+    std::vector<std::string> warnings;
+    bindings_.apply(kv, &warnings);
+    for (const auto& w : warnings) SDL_Log("[input] Override warning: %s", w.c_str());
+    SDL_Log("[input] Applied button overrides from %s", path.c_str());
+}
+
+void InputManager::setBindings(const InputBindings& bindings) {
+    for (int i = 0; i < kActionCount; ++i) setSource(padDown_, static_cast<Action>(i), false);
+    bindings_ = bindings;
+    // Re-press anything still physically held under the new numbers.
+    for (int i = 0; i < kActionCount; ++i) {
+        const int b = bindings_.padButton[i];
+        if (b >= 0 && b < kMaxButtons && rawButtons_[b]) padDown_[i] = 1;
+    }
+}
+
+bool InputManager::saveButtonBindings(const std::string& path) const {
+    KeyValueStore kv;
+    for (int i = 0; i < kActionCount; ++i) kv.set(kConfigNames[i], bindings_.padButton[i]);
+    return kv.saveToFile(path);
+}
 
 bool InputManager::down(Action a) const {
     const int i = idx(a);

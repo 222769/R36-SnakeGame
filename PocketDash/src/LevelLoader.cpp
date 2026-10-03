@@ -191,4 +191,30 @@ bool load(const std::string& id, Level& out, std::string* error) {
     return loadFile(platform::dataPath("assets/levels/" + id + ".lvl"), out, error);
 }
 
+const std::vector<Info>& catalog(int world) {
+    static std::vector<Info> cache[kWorldCount + 1];
+    static bool loaded[kWorldCount + 1] = {};
+    if (world < 1 || world > kWorldCount) return cache[0];
+    if (!loaded[world]) {
+        loaded[world] = true;
+        for (const std::string& id : worldLevelIds(world)) {
+            Info info;
+            info.id = id;
+            info.name = "?";
+            Level level;
+            std::string error;
+            if (load(id, level, &error)) {
+                info.name = level.name;
+                info.objective = level.objective;
+                info.stars = static_cast<int>(level.stars.size());
+                info.gems = static_cast<int>(level.gems.size());
+                info.secrets = level.secretCount();
+                info.loaded = true;
+            }
+            cache[world].push_back(std::move(info));
+        }
+    }
+    return cache[world];
+}
+
 } // namespace pd::levels

@@ -2,8 +2,12 @@
 
 #include "Constants.h"
 #include "Draw.h"
+#include "CollectionScene.h"
+#include "HighScoresScene.h"
+#include "LevelSelectScene.h"
 #include "PlayScene.h"
 #include "Platform.h"
+#include "SettingsScene.h"
 #include "TitleScene.h"
 
 #include <SDL_image.h>
@@ -54,13 +58,17 @@ Game::Game(const GameOptions& options) : options_(options) {
 
     createWindowAndRenderer();
 
+    save_ = std::make_unique<SaveManager>(platform::saveDir());
+    SDL_Log("[game] Save directory: %s", save_->saveDir().c_str());
+
     input_.loadConfig(platform::dataPath("config/controller.cfg"));
+    // Buttons remapped in Settings (automated runs use the shipped config).
+    if (!automated()) input_.loadOverrides(save_->controllerOverridePath());
     input_.openJoysticks();
     debug_ = options_.debug || input_.bindings().startWithDebug;
 
-    save_ = std::make_unique<SaveManager>(platform::saveDir());
-    SDL_Log("[game] Save directory: %s", save_->saveDir().c_str());
-    settings_ = save_->loadSettings();
+    // Automated runs ignore the saved options so they behave the same everywhere.
+    settings_ = automated() ? Settings{} : save_->loadSettings();
     if (!options_.difficulty.empty()) settings_.difficulty = difficultyFromName(options_.difficulty);
     SDL_Log("[game] Difficulty: %s", difficultyName(settings_.difficulty));
 
@@ -74,16 +82,55 @@ Game::Game(const GameOptions& options) : options_(options) {
     draw::initSkin(renderer_.get());
     if (!sprites_.create(renderer_.get(), platform::dataPath("assets/sprites/")))
         throw std::runtime_error("Failed to create sprites");
+    if (!backdrop_.build(renderer_.get())) SDL_Log("[game] Could not paint the menu backdrop");
+
+    // Automated runs start from a clean slate so they behave the same on
+    // every machine; --demo-progress fills in sample records for screenshots.
+    if (options_.demoProgress) progress_ = demoProgress();
+    else if (!automated()) progress_ = save_->loadProgress();
+    applyOutfit();
 
     // The smoke test starts on the title screen so it also covers that scene.
     // The smoke test's script is written for the built-in test meadow.
     if (options_.smokeTest) startLevel_ = "test";
     else if (!options_.startLevel.empty()) startLevel_ = options_.startLevel;
 
-    if (options_.skipTitle && !options_.smokeTest)
-        scene_ = std::make_unique<PlayScene>(*this, startLevel_);
-    else
-        scene_ = std::make_unique<TitleScene>(*this);
+    scene_ = makeStartScene();
+}
+
+std::unique_ptr<Scene> Game::makeStartScene() {
+    if (options_.skipTitle && !options_.smokeTest && !options_.menuTest)
+        return std::make_unique<PlayScene>(*this, playLevel());
+    const std::string& s = options_.startScene;
+    if (s == "menu") return std::make_unique<TitleScene>(*this, true);
+    if (s == "levels") return std::make_unique<LevelSelectScene>(*this);
+    if (s == "scores") return std::make_unique<HighScoresScene>(*this, std::string(), false);
+    if (s == "settings") return std::make_unique<SettingsScene>(*this);
+    if (s == "controls") return std::make_unique<SettingsScene>(*this, SettingsScene::Mode::ControllerTest);
+    if (s == "collection") return std::make_unique<CollectionScene>(*this);
+    if (!s.empty() && s != "title") SDL_Log("[game] Unknown --scene '%s', showing the title", s.c_str());
+    return std::make_unique<TitleScene>(*this);
+}
+
+std::string Game::playLevel() const {
+    if (!startLevel_.empty()) return startLevel_;
+    const std::string id = progress_.continueLevel(1);
+    return id.empty() ? std::string("1-1") : id;
+}
+
+void Game::saveProgress() {
+    if (automated()) return;
+    save_->saveProgress(progress_);
+}
+
+void Game::saveSettings() {
+    if (automated()) return;
+    save_->saveSettings(settings_);
+}
+
+void Game::applyOutfit() {
+    if (!sprites_.setOutfit(renderer_.get(), progress_.selectedOutfit()))
+        SDL_Log("[game] Could not repaint the hero: %s", SDL_GetError());
 }
 
 Game::~Game() {
@@ -193,7 +240,8 @@ int Game::run() {
     Uint64 last = SDL_GetPerformanceCounter();
     fpsWindowStart_ = last;
     double accumulator = 0.0;
-    const int maxFrames = options_.maxFrames > 0 ? options_.maxFrames : (options_.smokeTest ? 260 : 0);
+    const int defaultFrames = options_.smokeTest ? 260 : options_.menuTest ? kMenuTestFrames : 0;
+    const int maxFrames = options_.maxFrames > 0 ? options_.maxFrames : defaultFrames;
 
     while (running_) {
         const Uint64 frameStart = SDL_GetPerformanceCounter();
@@ -207,9 +255,10 @@ int Game::run() {
 
         processEvents();
 
-        if (options_.smokeTest) {
+        if (options_.smokeTest || options_.menuTest) {
             accumulator = kFixedDt; // deterministic: exactly one step per frame
-            applySmokeTestInput();
+            if (options_.smokeTest) applySmokeTestInput();
+            else applyMenuTestInput();
         }
 
         int steps = 0;
@@ -221,6 +270,7 @@ int Game::run() {
         if (steps == 4) accumulator = 0.0; // running too slow: drop time rather than lag forever
 
         if (options_.smokeTest) checkSmokeTest();
+        if (options_.menuTest) checkMenuTest();
 
         ++frameCount_;
         const bool lastFrame = maxFrames > 0 && frameCount_ >= maxFrames;
@@ -241,15 +291,23 @@ int Game::run() {
         frameMs_ = static_cast<float>(static_cast<double>(now - frameStart) / freq * 1000.0);
 
         // Without vsync, sleep off the rest of the frame to save battery.
-        if (!vsync_ && !options_.smokeTest) {
+        if (!vsync_ && !options_.smokeTest && !options_.menuTest) {
             const double elapsed = static_cast<double>(SDL_GetPerformanceCounter() - frameStart) / freq;
             const double remaining = kFixedDt - elapsed;
             if (remaining > 0.002) SDL_Delay(static_cast<Uint32>(remaining * 1000.0));
         }
     }
 
-    save_->saveSettings(settings_);
+    saveSettings();
 
+    if (options_.menuTest) {
+        if (!smokeFailed_ && std::strcmp(scene_->name(), "title") != 0) {
+            SDL_Log("[menus] FAIL: expected to end on the title screen, got '%s'", scene_->name());
+            smokeFailed_ = true;
+        }
+        SDL_Log("[menus] %s", smokeFailed_ ? "FAILED" : "PASSED");
+        return smokeFailed_ ? 1 : 0;
+    }
     if (options_.smokeTest) {
         if (!smokeFailed_ && std::strcmp(scene_->name(), "play") != 0) {
             SDL_Log("[smoke] FAIL: expected to end in the play scene, got '%s'", scene_->name());
@@ -327,6 +385,76 @@ bool Game::saveScreenshot(const std::string& path) {
 // player actually responds. Runs headless via SDL_VIDEODRIVER=dummy in CTest.
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// Scripted menu walk (--menu-test). Each entry holds one action for a few
+// frames; checkMenuTest() asserts which screen is showing at key frames.
+struct MenuStep {
+    Action action;
+    long from;
+    long to; // exclusive
+};
+const MenuStep kMenuScript[] = {
+    {Action::A, 5, 7},                                                    // title -> menu
+    {Action::Down, 12, 14}, {Action::A, 18, 20},                          // LEVEL SELECT
+    {Action::Right, 30, 32}, {Action::A, 40, 42},                         // locked level: refused
+    {Action::X, 50, 52},                                                  // high scores for it
+    {Action::Right, 62, 64}, {Action::B, 70, 72},                         // next level, back to the map
+    {Action::B, 82, 84},                                                  // back to the menu
+    {Action::Down, 95, 97}, {Action::Down, 100, 102}, {Action::A, 106, 108}, // COLLECTION
+    {Action::Right, 118, 120}, {Action::A, 124, 126}, {Action::B, 130, 132}, // locked outfit, back
+    {Action::Down, 142, 144}, {Action::Down, 147, 149}, {Action::Down, 152, 154}, {Action::Down, 157, 159},
+    {Action::A, 163, 165},                                                // SETTINGS
+    {Action::Right, 174, 176},                                            // music 7 -> 8
+    {Action::Down, 184, 186}, {Action::Down, 189, 191}, {Action::Down, 194, 196}, {Action::Down, 199, 201},
+    {Action::A, 205, 207},                                                // CONTROLLER TEST
+    {Action::B, 210, 280},                                                // hold B to leave it
+    {Action::Down, 285, 287}, {Action::A, 291, 293},                      // REMAP: no controller here
+    {Action::Down, 296, 298}, {Action::Down, 301, 303}, {Action::A, 307, 309}, // ERASE SAVE DATA
+    {Action::A, 312, 440},                                                // hold A to erase
+    {Action::B, 445, 447},                                                // leave settings
+    {Action::Down, 460, 462}, {Action::Down, 465, 467}, {Action::Down, 470, 472}, {Action::A, 476, 478}, // HIGH SCORES
+    {Action::B, 488, 490},
+    {Action::A, 500, 502},                                                // PLAY
+    {Action::Start, 515, 517}, {Action::Down, 520, 522}, {Action::Down, 525, 527}, {Action::A, 531, 533}, // pause -> map
+    {Action::B, 545, 547},                                                // map -> menu
+};
+
+struct MenuCheck {
+    long frame;
+    const char* scene;
+};
+const MenuCheck kMenuChecks[] = {
+    {25, "levels"},  {45, "levels"},  {58, "scores"}, {78, "levels"},   {90, "title"},
+    {114, "collection"}, {128, "collection"}, {138, "title"}, {170, "settings"}, {290, "settings"},
+    {455, "title"},  {484, "scores"}, {496, "title"}, {510, "play"},   {540, "levels"},
+};
+
+} // namespace
+
+void Game::applyMenuTestInput() {
+    const long f = frameCount_;
+    bool held[kActionCount] = {};
+    for (const MenuStep& w : kMenuScript)
+        if (f >= w.from && f < w.to) held[static_cast<int>(w.action)] = true;
+    for (int i = 0; i < kActionCount; ++i) input_.setInjected(static_cast<Action>(i), held[i]);
+}
+
+bool Game::checkMenuTest() {
+    const long f = frameCount_;
+    auto fail = [&](const std::string& what) {
+        SDL_Log("[menus] FAIL at frame %ld: %s", f, what.c_str());
+        smokeFailed_ = true;
+        running_ = false;
+        return false;
+    };
+    for (const MenuCheck& c : kMenuChecks)
+        if (f == c.frame && std::strcmp(scene_->name(), c.scene) != 0)
+            return fail(std::string("expected '") + c.scene + "', showing '" + scene_->name() + "'");
+    if (f == 180 && settings_.musicVolume != 8) return fail("RIGHT did not raise the music volume");
+    return true;
+}
+
 void Game::applySmokeTestInput() {
     struct Window {
         Action action;
@@ -334,7 +462,8 @@ void Game::applySmokeTestInput() {
         long to; // exclusive
     };
     static const Window kScript[] = {
-        {Action::A, 5, 7},         // title -> gameplay
+        {Action::A, 5, 7},         // title -> main menu
+        {Action::A, 10, 12},       // PLAY
         {Action::Right, 20, 80},   // walk right for one second
         {Action::B, 90, 92},       // dash
         {Action::A, 110, 112},     // hop

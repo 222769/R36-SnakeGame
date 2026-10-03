@@ -38,4 +38,18 @@ std::string nextLevelId(const std::string& id);
 // Loads assets/levels/<id>.lvl from the data directory.
 bool load(const std::string& id, Level& out, std::string* error);
 
+// Summary of a level for menus (level select, high scores, collection).
+struct Info {
+    std::string id;
+    std::string name;     // "?" if the file failed to load
+    Objective objective = Objective::ReachExit;
+    int stars = 0;
+    int gems = 0;
+    int secrets = 0;
+    bool loaded = false;
+};
+// Summaries of a world's levels, in play order. Loaded on first use and
+// cached for the rest of the run.
+const std::vector<Info>& catalog(int world);
+
 } // namespace pd::levels

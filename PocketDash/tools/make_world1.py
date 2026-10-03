@@ -410,7 +410,33 @@ def guardian():
     return g, ["THE MEADOW GUARDIAN SLEEPS IN THE CLEARING... (THE BOSS WAKES UP IN A FUTURE UPDATE!)"]
 
 
+# One hidden gem per level (1-6 places its own), mostly in secret rooms.
+# Gems unlock hero outfits on the Collection screen.
+GEMS = {
+    "1-1": (34, 1),  # behind the secret hedge, top right
+    "1-2": (34, 1),  # top of the strip past the raft river
+    "1-3": (39, 2),  # tiny-gap room, top right
+    "1-4": (8, 5),   # locked room with the first friend
+    "1-5": (45, 2),  # secret room above the exit
+    "1-7": (59, 1),  # secret room above the exit
+    "1-8": (1, 9),   # far left of the arena field
+}
+
+
+def place_gems():
+    for i, (header, rows, signs) in enumerate(LEVELS):
+        pos = GEMS.get(header["id"])
+        if not pos:
+            continue
+        x, y = pos
+        row = list(rows[y])
+        assert row[x] == ".", f"{header['id']}: gem spot {pos} is '{row[x]}', not floor"
+        row[x] = "g"
+        rows[y] = "".join(row)
+
+
 def main():
+    place_gems()
     out_dir = os.path.join(os.path.dirname(__file__), "..", "assets", "levels")
     problems = []
     for header, rows, signs in LEVELS:

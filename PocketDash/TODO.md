@@ -157,17 +157,25 @@ Legend: `[x]` done · `[ ]` to do · `[~]` partly done / skeleton in place
   - [x] 1-6's key pocket didn't need Giant Mode, and 1-5's star could be reached by walking
         around (found by reading the maps)
 
-## Phase 6: Menus, level select, scoring, saves
+## ✅ Phase 6: Menus, level select, scoring, saves (complete)
 
-- [ ] Main menu: Play, Level Select, Collection, High Scores, Settings, Quit
-- [ ] Menu auto-repeat for held directions
-- [ ] Level select map for World 1 with lock state, stars and Golden Star icons
-- [ ] Score: coins, enemies, stars, remaining hearts, time bonus, secrets (and the difficulty multiplier)
-- [ ] Per-level records: best score, best time, stars found, secrets found, Golden Star
-- [ ] Local high-score table (top 5 per level, 3-letter initials)
-- [ ] `save/progress.ini`: unlocks, records, collectibles, gems
-- [ ] Settings screen: music/SFX volume, screen shake, difficulty, controller test/remap screen
-- [ ] Collection screen (gems → cosmetic items)
+- [x] Main menu: Play (continues at the first unfinished level), Level Select, Collection, High Scores, Settings, Quit
+- [x] Menu auto-repeat for held directions (`InputManager::repeated`, 0.4 s delay, then 10 per second)
+- [x] Level select map for World 1: painted island, path, lock state, stars per level, Golden Star badges,
+      record panel; X opens the level's high scores
+- [x] Score: coins, enemies, stars, secrets, hearts left, time bonus under par, Golden Star, difficulty multiplier
+      (shown as a breakdown on the results panel, with the total counting up)
+- [x] Per-level records: best score, best time, stars found (kept across runs), gems, secrets, Golden Star;
+      "NEW BEST" / "FIRST CLEAR" badges
+- [x] Local high-score table (top 5 per level, 3-letter initials entered on the results panel)
+- [x] `save/progress.ini`: unlocks, records, high scores, gems, outfit; atomic writes, tolerant loading
+- [x] Settings screen: music/SFX volume, screen shake, difficulty, controller test, button remap (with
+      timed confirmation and revert), reset buttons, erase save (hold to confirm)
+- [x] Collection screen: gems per level, star totals, 6 outfits unlocked by gem totals (never spent)
+- [x] One hidden gem per World 1 level (generator places and validates them)
+- [x] Pause menu: Resume, Restart, Level Select, Quit to Title
+- [x] `--menu-test` headless walk through every screen (CTest `menu_test`); `--scene`, `--demo-progress`
+- [ ] On the device: check that the remap flow works with the R36S d-pad (hat vs buttons)
 
 ## Phase 7: Boss — The Meadow Guardian
 

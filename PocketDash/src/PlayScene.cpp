@@ -5,6 +5,8 @@
 #include "Draw.h"
 #include "Game.h"
 #include "LevelLoader.h"
+#include "LevelSelectScene.h"
+#include "Menu.h"
 #include "TitleScene.h"
 #include "World.h"
 
@@ -17,23 +19,13 @@ namespace pd {
 
 namespace {
 
-constexpr const char* kPauseItems[] = {"RESUME", "RESTART", "QUIT TO TITLE"};
-constexpr int kPauseItemCount = 3;
+constexpr const char* kPauseItems[] = {"RESUME", "RESTART", "LEVEL SELECT", "QUIT TO TITLE"};
+constexpr int kPauseItemCount = 4;
 constexpr float kBannerTime = 2.6f;
 // Height of the HUD strip; the camera may scroll this far above the map.
 constexpr float kHudMargin = 40.0f;
 // Results-screen inputs are ignored briefly so gameplay presses don't skip it.
 constexpr float kClearInputDelay = 0.8f;
-
-// "1:05.3" style clock.
-void formatTime(char* out, size_t size, float seconds, bool tenths) {
-    seconds = std::clamp(seconds, 0.0f, 99.0f * 60.0f + 59.9f); // keep the HUD short
-    const int total = static_cast<int>(seconds);
-    if (tenths)
-        std::snprintf(out, size, "%d:%02d.%d", total / 60, total % 60, static_cast<int>(seconds * 10.0f) % 10);
-    else
-        std::snprintf(out, size, "%d:%02d", total / 60, total % 60);
-}
 
 } // namespace
 
@@ -99,9 +91,84 @@ void PlayScene::objectiveText(char* out, size_t size) const {
 void PlayScene::goToNextLevel() {
     const std::string next = levels::nextLevelId(levelId_);
     if (next.empty())
-        game_.changeScene(std::make_unique<TitleScene>(game_));
+        leaveToMap();
     else
         game_.changeScene(std::make_unique<PlayScene>(game_, next));
+}
+
+void PlayScene::leaveToMap() {
+    // The built-in test meadow is not on the map: it returns to the title.
+    if (levelId_ == "test")
+        game_.changeScene(std::make_unique<TitleScene>(game_, true));
+    else
+        game_.changeScene(std::make_unique<LevelSelectScene>(game_, levelId_));
+}
+
+void PlayScene::finishLevel() {
+    score_ = computeScore(*session_);
+    record_ = RecordUpdate{};
+    enteringInitials_ = false;
+    highScoreSaved_ = false;
+    if (levelId_ == "test") return; // practice level: no records
+
+    Progress& progress = game_.progress();
+    previousBestTime_ = progress.record(levelId_).bestTime;
+    ClearResult result;
+    result.score = score_.total();
+    result.time = session_->time();
+    const ItemField& items = session_->items();
+    for (int i = 0; i < items.starsTotal(); ++i)
+        if (items.starCollected(i)) result.starsMask |= 1u << i;
+    result.gems = items.gemsCollected();
+    result.secrets = session_->secretsFound();
+    result.goldenStar = session_->goldenStar();
+    const int gemsBefore = progress.totalGems();
+    record_ = progress.recordClear(levelId_, result);
+    // A new outfit may have unlocked: mention it.
+    for (int i = 0; i < kOutfitCount; ++i) {
+        if (outfit(i).gemsNeeded > gemsBefore && outfit(i).gemsNeeded <= progress.totalGems()) {
+            char text[48];
+            std::snprintf(text, sizeof(text), "NEW OUTFIT: %s!", outfit(i).name);
+            showToast(text);
+        }
+    }
+    game_.saveProgress();
+    SDL_Log("[score] %s cleared: %d points (rank %d)", levelId_.c_str(), result.score, record_.highScoreRank);
+    if (record_.highScoreRank >= 0) {
+        enteringInitials_ = true;
+        initialsCursor_ = 0;
+        std::snprintf(initials_, sizeof(initials_), "%s", progress.lastInitials().c_str());
+    }
+}
+
+void PlayScene::updateInitials() {
+    InputManager& in = game_.input();
+    AudioManager& audio = game_.audio();
+    char& c = initials_[initialsCursor_];
+    if (in.repeated(Action::Up)) {
+        c = c >= 'Z' ? 'A' : static_cast<char>(c + 1);
+        audio.play(Sfx::MenuMove);
+    } else if (in.repeated(Action::Down)) {
+        c = c <= 'A' ? 'Z' : static_cast<char>(c - 1);
+        audio.play(Sfx::MenuMove);
+    } else if (in.repeated(Action::Right) && initialsCursor_ < 2) {
+        ++initialsCursor_;
+        audio.play(Sfx::MenuMove);
+    } else if ((in.repeated(Action::Left) || in.pressed(Action::B)) && initialsCursor_ > 0) {
+        --initialsCursor_;
+        audio.play(Sfx::MenuMove);
+    } else if (in.pressed(Action::A) || in.pressed(Action::Start)) {
+        if (initialsCursor_ < 2 && !in.pressed(Action::Start)) {
+            ++initialsCursor_;
+            audio.play(Sfx::MenuMove);
+        } else {
+            game_.progress().addHighScore(levelId_, initials_, score_.total());
+            game_.saveProgress();
+            enteringInitials_ = false;
+            highScoreSaved_ = true;
+            audio.play(Sfx::Star);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -180,14 +247,14 @@ void PlayScene::update(float dt) {
             restart();
         } else if (in.pressed(Action::B)) {
             audio.play(Sfx::MenuSelect);
-            game_.changeScene(std::make_unique<TitleScene>(game_));
+            leaveToMap();
         }
     }
 
     const Player& player = session_->player();
     if (session_->state() == LevelSession::State::Cleared) {
         // Frame the hero in the upper half, above the results panel.
-        camera_.follow(player.position() + Vec2{0.0f, 110.0f}, {}, dt);
+        camera_.follow(player.position() + Vec2{0.0f, 150.0f}, {}, dt);
         updateCleared();
     } else {
         camera_.follow(player.position() - Vec2{0.0f, 12.0f}, player.velocity() * 0.18f, dt);
@@ -214,7 +281,10 @@ void PlayScene::handleEvents(unsigned events) {
         camera_.shake(6.0f, 0.3f);
         hudHurt_ = 0.5f;
     }
-    if (events & kSessionCleared) audio.play(Sfx::LevelComplete);
+    if (events & kSessionCleared) {
+        audio.play(Sfx::LevelComplete);
+        finishLevel();
+    }
     if (events & kSessionStar) audio.play(Sfx::Star);
     if (events & kSessionGem) audio.play(Sfx::Gem);
     if (events & kSessionPowerUpGet) audio.play(Sfx::PowerUp);
@@ -274,6 +344,10 @@ void PlayScene::handleEvents(unsigned events) {
 
 void PlayScene::updateCleared() {
     if (session_->stateTime() < kClearInputDelay) return;
+    if (enteringInitials_) {
+        updateInitials();
+        return;
+    }
     InputManager& in = game_.input();
     if (in.pressed(Action::A) || in.pressed(Action::Start)) {
         game_.audio().play(Sfx::MenuSelect);
@@ -293,20 +367,14 @@ void PlayScene::updatePauseMenu() {
         audio.play(Sfx::Pause);
         return;
     }
-    if (in.pressed(Action::Up)) {
-        pauseIndex_ = (pauseIndex_ + kPauseItemCount - 1) % kPauseItemCount;
-        audio.play(Sfx::MenuMove);
-    }
-    if (in.pressed(Action::Down)) {
-        pauseIndex_ = (pauseIndex_ + 1) % kPauseItemCount;
-        audio.play(Sfx::MenuMove);
-    }
+    menu::navigate(game_, pauseIndex_, kPauseItemCount);
     if (in.pressed(Action::A)) {
         audio.play(Sfx::MenuSelect);
         switch (pauseIndex_) {
         case 0: overlay_ = Overlay::None; break;
         case 1: restart(); break;
-        case 2: game_.changeScene(std::make_unique<TitleScene>(game_)); break;
+        case 2: leaveToMap(); break;
+        case 3: game_.changeScene(std::make_unique<TitleScene>(game_, true)); break;
         default: break;
         }
     }
@@ -477,7 +545,7 @@ void PlayScene::renderHud(SDL_Renderer* r) const {
     // Clock, or a countdown on timed levels (red in the last 10 seconds).
     char clock[24];
     const bool timed = session_->timeLimit() > 0.0f;
-    formatTime(clock, sizeof(clock), timed ? session_->timeLeft() : session_->time(), false);
+    ui::formatTime(clock, sizeof(clock), timed ? session_->timeLeft() : session_->time(), false);
     const bool hurry = timed && session_->timeLeft() < 10.0f;
     const int clockScale = timed ? 3 : 2;
     const SDL_Color clockColor = hurry && static_cast<int>(animTime_ * 4.0f) % 2 ? ui::kPink : ui::kWhite;
@@ -707,18 +775,12 @@ void PlayScene::renderKnockOut(SDL_Renderer* r, Vec2 cam) const {
 void PlayScene::renderPauseMenu(SDL_Renderer* r) const {
     const BitmapFont& font = game_.font();
     ui::dimScreen(r, 140);
-    const SDL_Rect panel{kScreenWidth / 2 - 150, 130, 300, 210};
+    const SDL_Rect panel{kScreenWidth / 2 - 160, 100, 320, 270};
     ui::drawPanel(r, panel);
-    font.drawCentered(r, kScreenWidth / 2, 152, "PAUSED", 4, ui::kYellow);
-    for (int i = 0; i < kPauseItemCount; ++i) {
-        const bool selected = i == pauseIndex_;
-        const int y = 220 + i * 36;
-        font.drawCentered(r, kScreenWidth / 2, y, kPauseItems[i], 3, selected ? ui::kWhite : ui::kGrey);
-        if (selected) {
-            const int w = BitmapFont::textWidth(kPauseItems[i], 3);
-            font.draw(r, kScreenWidth / 2 - w / 2 - 30, y, ">", 3, ui::kPink);
-        }
-    }
+    font.drawCentered(r, kScreenWidth / 2, panel.y + 18, "PAUSED", 4, ui::kYellow);
+    for (int i = 0; i < kPauseItemCount; ++i)
+        menu::drawRow(r, font, SDL_Rect{panel.x + 30, panel.y + 76 + i * 46, panel.w - 60, 36}, kPauseItems[i], {},
+                      i == pauseIndex_);
 }
 
 void PlayScene::renderInfoPanel(SDL_Renderer* r) const {
@@ -736,7 +798,7 @@ void PlayScene::renderInfoPanel(SDL_Renderer* r) const {
     std::snprintf(found, sizeof(found), "COINS %d/%d  STARS %d/%d", session_->coins().collected(),
                   session_->coins().total(), items.starsCollected(), items.starsTotal());
     char clock[24];
-    formatTime(clock, sizeof(clock), session_->time(), false);
+    ui::formatTime(clock, sizeof(clock), session_->time(), false);
     char time[64];
     std::snprintf(time, sizeof(time), "TIME %s  MODE %s", clock, difficultyName(session_->difficulty()));
 
@@ -764,19 +826,21 @@ void PlayScene::renderInfoPanel(SDL_Renderer* r) const {
 
 void PlayScene::renderClearPanel(SDL_Renderer* r) const {
     const BitmapFont& font = game_.font();
-    // The panel sits in the lower part of the screen so the hero's victory
-    // hops (upper half of the view) stay visible. It grows open over 0.25 s.
-    constexpr int kTop = 232;
-    constexpr int kHeight = 240;
+    // The panel fills the lower part of the screen so the hero's victory
+    // hops (top of the view) stay visible. It grows open over 0.25 s.
+    constexpr int kTop = 168;
+    constexpr int kHeight = 304;
+    constexpr int kWidth = 470;
+    const int left = kScreenWidth / 2 - kWidth / 2;
     const float st = session_->stateTime();
     const float grow = std::min(1.0f, st / 0.25f);
     const int h = static_cast<int>(kHeight * grow);
     ui::dimScreen(r, static_cast<Uint8>(60 * grow));
-    ui::drawPanel(r, SDL_Rect{kScreenWidth / 2 - 200, kTop + (kHeight - h) / 2, 400, h});
+    ui::drawPanel(r, SDL_Rect{left, kTop + (kHeight - h) / 2, kWidth, h});
     if (grow < 1.0f) return;
 
-    const int bounce = static_cast<int>(std::lround(std::fabs(std::sin(st * 4.0f)) * -6.0f));
-    font.drawCentered(r, kScreenWidth / 2, kTop + 14 + bounce, "LEVEL CLEAR!", 4, ui::kYellow);
+    const int bounce = static_cast<int>(std::lround(std::fabs(std::sin(st * 4.0f)) * -5.0f));
+    font.drawCentered(r, kScreenWidth / 2, kTop + 12 + bounce, "LEVEL CLEAR!", 4, ui::kYellow);
 
     // Stars found, popping in one by one.
     const ItemField& items = session_->items();
@@ -785,42 +849,111 @@ void PlayScene::renderClearPanel(SDL_Renderer* r) const {
         const int total = items.starsTotal();
         const int x0 = kScreenWidth / 2 - (total * (icon + 6) - 6) / 2;
         for (int i = 0; i < total; ++i) {
-            if (st < 0.3f + 0.15f * static_cast<float>(i)) continue;
+            const float appear = 0.3f + 0.15f * static_cast<float>(i);
+            if (st < appear) continue;
+            const float pop = std::min(1.0f, (st - appear) / 0.15f);
+            const int size = static_cast<int>(icon * (0.6f + 0.4f * pop));
             const int frame = items.starCollected(i) ? Sprites::kItemStar : Sprites::kItemStarEmpty;
             const SDL_Rect src{frame * Sprites::kItemSize, 0, Sprites::kItemSize, Sprites::kItemSize};
-            const SDL_Rect dst{x0 + i * (icon + 6), kTop + 52, icon, icon};
+            const SDL_Rect dst{x0 + i * (icon + 6) + (icon - size) / 2, kTop + 52 + (icon - size) / 2, size, size};
             SDL_RenderCopy(r, tex, &src, &dst);
         }
     }
 
-    const CoinField& coinField = session_->coins();
-    char line[64];
-    std::snprintf(line, sizeof(line), "COINS  %d/%d", coinField.collected(), coinField.total());
-    font.drawCentered(r, kScreenWidth / 2, kTop + 98, line, 3, ui::kWhite);
-    char clock[24];
-    formatTime(clock, sizeof(clock), session_->time(), true);
-    std::snprintf(line, sizeof(line), "TIME  %s", clock);
-    font.drawCentered(r, kScreenWidth / 2, kTop + 126, line, 3, ui::kWhite);
-    if (items.gemsTotal() > 0)
-        std::snprintf(line, sizeof(line), "FOES %d   GEMS %d/%d", session_->stats().enemiesDefeated, items.gemsCollected(),
-                      items.gemsTotal());
-    else
-        std::snprintf(line, sizeof(line), "FOES DEFEATED  %d", session_->stats().enemiesDefeated);
-    font.drawCentered(r, kScreenWidth / 2, kTop + 156, line, 2, ui::kWhite);
+    // Score breakdown: two columns of "label .... points".
+    struct Row {
+        const char* label;
+        int points;
+    };
+    const Row rows[8] = {{"COINS", score_.coins},   {"FOES", score_.foes},   {"STARS", score_.stars},
+                         {"SECRETS", score_.secrets}, {"HEARTS", score_.hearts}, {"TIME BONUS", score_.time},
+                         {"GOLDEN STAR", score_.golden}, {"DIFFICULTY", 0}};
+    const int colW = (kWidth - 60) / 2;
+    for (int i = 0; i < 8; ++i) {
+        const int x = left + 20 + (i / 4) * (colW + 20);
+        const int y = kTop + 98 + (i % 4) * 21;
+        char value[24];
+        if (i == 7)
+            std::snprintf(value, sizeof(value), "x%.1f", static_cast<double>(score_.multiplier));
+        else
+            ui::formatScore(value, sizeof(value), rows[i].points);
+        const bool zero = i != 7 && rows[i].points == 0;
+        font.draw(r, x, y, rows[i].label, 2, zero ? ui::kGrey : ui::kWhite);
+        font.draw(r, x + colW - BitmapFont::textWidth(value, 2), y, value, 2, zero ? ui::kGrey : ui::kYellow);
+    }
 
+    // Total, counting up.
+    const float countT = std::clamp((st - 0.6f) / 0.8f, 0.0f, 1.0f);
+    char total[24];
+    ui::formatScore(total, sizeof(total), static_cast<int>(static_cast<float>(score_.total()) * countT));
+    char line[64];
+    std::snprintf(line, sizeof(line), "SCORE  %s", total);
+    font.drawCentered(r, kScreenWidth / 2, kTop + 188, line, 3, ui::kWhite);
+    if (countT >= 1.0f && (record_.newBestScore || record_.firstClear) && levelId_ != "test") {
+        const char* badge = record_.newBestScore ? "NEW BEST!" : "FIRST CLEAR!";
+        const int bx = kScreenWidth / 2 + BitmapFont::textWidth(line, 3) / 2 + 10;
+        const int bw = BitmapFont::textWidth(badge, 1) + 14;
+        draw::roundedRect(r, SDL_Rect{bx, kTop + 190, bw, 20}, SDL_Color{236, 92, 120, 255}, SDL_Color{0, 0, 0, 0});
+        font.draw(r, bx + 7, kTop + 194, badge, 1, ui::kWhite);
+    }
+
+    if (enteringInitials_) {
+        renderInitials(r, kTop + 222);
+        return;
+    }
+
+    char clock[24];
+    ui::formatTime(clock, sizeof(clock), session_->time(), true);
+    if (record_.newBestTime) {
+        std::snprintf(line, sizeof(line), "TIME %s  NEW BEST TIME!", clock);
+    } else if (previousBestTime_ > 0.0f) {
+        char best[24];
+        ui::formatTime(best, sizeof(best), previousBestTime_, true);
+        std::snprintf(line, sizeof(line), "TIME %s   BEST %s", clock, best);
+    } else {
+        std::snprintf(line, sizeof(line), "TIME %s", clock);
+    }
+    font.drawCentered(r, kScreenWidth / 2, kTop + 222, line, 2, record_.newBestTime ? ui::kMint : ui::kWhite);
+
+    const CoinField& coinField = session_->coins();
     if (session_->goldenStar()) {
-        // The big reward: everything found in one run.
         const Uint8 g = static_cast<Uint8>(200.0f + 55.0f * std::sin(st * 8.0f));
-        font.drawCentered(r, kScreenWidth / 2, kTop + 178, "GOLDEN STAR!", 2, SDL_Color{255, g, 60, 255});
+        font.drawCentered(r, kScreenWidth / 2, kTop + 246, "GOLDEN STAR! EVERYTHING FOUND!", 2, SDL_Color{255, g, 60, 255});
+    } else if (highScoreSaved_) {
+        font.drawCentered(r, kScreenWidth / 2, kTop + 246, "HIGH SCORE SAVED!", 2, ui::kMint);
     } else if (coinField.collected() == coinField.total()) {
-        font.drawCentered(r, kScreenWidth / 2, kTop + 178, "ALL COINS!", 2, ui::kMint);
+        font.drawCentered(r, kScreenWidth / 2, kTop + 246, "ALL COINS!", 2, ui::kMint);
     }
 
     if (st >= kClearInputDelay) {
         const bool last = levels::nextLevelId(levelId_).empty();
-        font.drawCentered(r, kScreenWidth / 2 - 96, kTop + 206, last ? "A  TITLE" : "A  NEXT LEVEL", 2, ui::kWhite);
-        font.drawCentered(r, kScreenWidth / 2 + 96, kTop + 206, "B  PLAY AGAIN", 2, ui::kGrey);
+        font.drawCentered(r, kScreenWidth / 2 - 110, kTop + 274, last ? "A  MAP" : "A  NEXT LEVEL", 2, ui::kWhite);
+        font.drawCentered(r, kScreenWidth / 2 + 110, kTop + 274, "B  PLAY AGAIN", 2, ui::kGrey);
     }
+}
+
+void PlayScene::renderInitials(SDL_Renderer* r, int y) const {
+    const BitmapFont& font = game_.font();
+    char line[64];
+    std::snprintf(line, sizeof(line), "NEW HIGH SCORE!  #%d", record_.highScoreRank + 1);
+    font.drawCentered(r, kScreenWidth / 2, y, line, 2, ui::kPink);
+    // Three letter boxes; the active one bobs and shows up/down arrows.
+    constexpr int boxW = 34, boxH = 34, gap = 10;
+    const int x0 = kScreenWidth / 2 - (3 * boxW + 2 * gap) / 2;
+    for (int i = 0; i < 3; ++i) {
+        const bool active = i == initialsCursor_;
+        const SDL_Rect box{x0 + i * (boxW + gap), y + 24, boxW, boxH};
+        draw::roundedRect(r, box, active ? SDL_Color{255, 250, 236, 250} : SDL_Color{255, 255, 255, 40},
+                          active ? SDL_Color{246, 196, 62, 255} : SDL_Color{255, 255, 255, 90});
+        const char glyph[2] = {initials_[i], '\0'};
+        font.drawCentered(r, box.x + boxW / 2, box.y + 5, glyph, 3, active ? ui::kInk : ui::kWhite, false);
+        if (active) {
+            const int bob = static_cast<int>(std::lround(std::sin(animTime_ * 6.0f) * 2.0f));
+            draw::fillCircle(r, box.x + boxW / 2, box.y - 6 + bob, 3, ui::kYellow);
+            draw::fillCircle(r, box.x + boxW / 2, box.y + boxH + 6 - bob, 3, ui::kYellow);
+        }
+    }
+    font.drawCentered(r, kScreenWidth / 2, y + 66, "ENTER YOUR NAME:  UP/DOWN LETTER   A NEXT / OK", 1, ui::kWhite);
 }
 
 // ---------------------------------------------------------------------------

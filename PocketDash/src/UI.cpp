@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace pd {
@@ -330,6 +331,25 @@ void drawPanel(SDL_Renderer* r, const SDL_Rect& rect, SDL_Color fill, SDL_Color 
     // backings (no border) get a lighter shadow.
     const Uint8 shadowAlpha = border.a ? 110 : static_cast<Uint8>(fill.a / 3);
     draw::roundedRect(r, rect, fill, border, SDL_Color{0, 0, 0, shadowAlpha});
+}
+
+void formatTime(char* out, size_t size, float seconds, bool tenths) {
+    seconds = std::clamp(seconds, 0.0f, 99.0f * 60.0f + 59.9f); // keep the text short
+    const int total = static_cast<int>(seconds);
+    if (tenths)
+        std::snprintf(out, size, "%d:%02d.%d", total / 60, total % 60, static_cast<int>(seconds * 10.0f) % 10);
+    else
+        std::snprintf(out, size, "%d:%02d", total / 60, total % 60);
+}
+
+void formatScore(char* out, size_t size, int score) {
+    score = std::clamp(score, 0, 999999999);
+    if (score >= 1000000)
+        std::snprintf(out, size, "%d,%03d,%03d", score / 1000000, score / 1000 % 1000, score % 1000);
+    else if (score >= 1000)
+        std::snprintf(out, size, "%d,%03d", score / 1000, score % 1000);
+    else
+        std::snprintf(out, size, "%d", score);
 }
 
 void dimScreen(SDL_Renderer* r, Uint8 alpha) {

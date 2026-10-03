@@ -1,7 +1,9 @@
 #pragma once
 
 #include "AudioManager.h"
+#include "Backdrop.h"
 #include "InputManager.h"
+#include "Progress.h"
 #include "SaveManager.h"
 #include "Scene.h"
 #include "SdlPtr.h"
@@ -20,12 +22,18 @@ struct GameOptions {
     bool debug = false;
     bool softwareRenderer = false;
     bool smokeTest = false;     // scripted headless run with assertions
+    bool menuTest = false;      // scripted headless walk through every menu screen
+    bool demoProgress = false;  // sample progress (not saved), for screenshots
+    std::string startScene;     // title | menu | levels | scores | settings | collection | controls
     bool skipTitle = false;     // start straight in gameplay
     std::string startLevel;     // level the title screen starts ("" = 1-1, "test" = built-in meadow)
     std::string difficulty;     // overrides (and saves) the difficulty setting
     int maxFrames = 0;          // quit after N frames (0 = run forever)
     std::string screenshotPath; // save the final frame as PNG
 };
+
+// Length of the --menu-test script, in frames.
+constexpr int kMenuTestFrames = 560;
 
 // Owns SDL, the window, every engine service and the active scene, and
 // runs the fixed-timestep main loop.
@@ -55,6 +63,19 @@ public:
     bool debugEnabled() const { return debug_; }
     // Level that "press A" on the title screen starts.
     const std::string& startLevel() const { return startLevel_; }
+    // Level "Play" starts: the --level override, else the first unfinished one.
+    std::string playLevel() const;
+
+    Progress& progress() { return progress_; }
+    // Writes progress.ini (skipped in automated runs so tests never touch
+    // the real save).
+    void saveProgress();
+    void saveSettings();
+    // Repaints the hero in the selected outfit.
+    void applyOutfit();
+    // Scripted / frame-limited runs: nothing is written to the save folder.
+    bool automated() const { return options_.smokeTest || options_.menuTest || options_.maxFrames > 0; }
+    const Backdrop& backdrop() const { return backdrop_; }
     // Seconds of simulated time since start (stops while minimised).
     double time() const { return simTime_; }
 
@@ -74,6 +95,9 @@ private:
     bool saveScreenshot(const std::string& path);
     void applySmokeTestInput();
     bool checkSmokeTest();
+    void applyMenuTestInput();
+    bool checkMenuTest();
+    std::unique_ptr<Scene> makeStartScene();
 
     GameOptions options_;
     SdlSystem sdl_; // must be the first member: destroyed last
@@ -83,12 +107,14 @@ private:
     AudioManager audio_;
     std::unique_ptr<SaveManager> save_;
     Settings settings_;
+    Progress progress_;
+    Backdrop backdrop_;
     BitmapFont font_;
     Sprites sprites_;
     std::unique_ptr<Scene> scene_;
     std::unique_ptr<Scene> pendingScene_;
 
-    std::string startLevel_ = "1-1";
+    std::string startLevel_; // --level override ("" = continue from progress)
     bool running_ = true;
     bool debug_ = false;
     bool vsync_ = false;

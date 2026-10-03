@@ -29,6 +29,9 @@ void printUsage() {
         "  --frames N          quit after N frames\n"
         "  --screenshot FILE   save the last frame as PNG (use with --frames)\n"
         "  --smoke-test        run the scripted self-test and exit (0 = pass)\n"
+        "  --menu-test         walk through every menu with scripted input (0 = pass)\n"
+        "  --scene NAME        start on: title, menu, levels, scores, settings, controls, collection\n"
+        "  --demo-progress     use sample progress (records, gems); nothing is saved\n"
         "  --check-levels      load every level file, report problems and exit\n"
         "  --help              show this help\n",
         POCKETDASH_VERSION);
@@ -73,6 +76,9 @@ int main(int argc, char* argv[]) {
         else if (!std::strcmp(arg, "--frames")) options.maxFrames = std::atoi(next());
         else if (!std::strcmp(arg, "--screenshot")) options.screenshotPath = next();
         else if (!std::strcmp(arg, "--smoke-test")) options.smokeTest = true;
+        else if (!std::strcmp(arg, "--menu-test")) options.menuTest = true;
+        else if (!std::strcmp(arg, "--demo-progress")) options.demoProgress = true;
+        else if (!std::strcmp(arg, "--scene")) options.startScene = next();
         else if (!std::strcmp(arg, "--check-levels")) return checkLevels();
         else if (!std::strcmp(arg, "--help") || !std::strcmp(arg, "-h")) {
             printUsage();
