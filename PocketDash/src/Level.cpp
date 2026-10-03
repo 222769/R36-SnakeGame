@@ -20,9 +20,13 @@ int toTile(float px) { return static_cast<int>(std::floor(px / kTile)); }
 bool charToTile(char c, Tile& out) {
     switch (c) {
     case '.': case 'P': case 'c': case 'h': case 's': case 'b': case 'B': case 'm':
-    case 'C': case 'k': case 'r':
+    case 'C': case 'k': case 'r': case '*': case 'g':
+    case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8':
         out = Tile::Ground;
         return true;
+    case 'x': out = Tile::Crate; return true;
+    case 'X': out = Tile::Boulder; return true;
+    case ':': out = Tile::TinyGap; return true;
     case '#': out = Tile::Wall; return true;
     case 'T': out = Tile::Tree; return true;
     case 'o': out = Tile::Rock; return true;
@@ -37,11 +41,11 @@ bool charToTile(char c, Tile& out) {
 
 // Moves `box` along one axis by `d`, stopping flush against solid tiles.
 // Returns the distance moved; sets `blocked` if a wall was hit.
-float moveAxis(const Level& level, RectF& box, float d, bool horizontal, bool& blocked) {
+float moveAxis(const Level& level, RectF& box, float d, bool horizontal, bool& blocked, unsigned pass) {
     if (d == 0.0f) return 0.0f;
     RectF moved = box;
     (horizontal ? moved.x : moved.y) += d;
-    if (!level.overlapsSolid(moved)) {
+    if (!level.overlapsSolid(moved, pass)) {
         box = moved;
         return d;
     }
@@ -58,7 +62,7 @@ float moveAxis(const Level& level, RectF& box, float d, bool horizontal, bool& b
     const float actual = horizontal ? moved.x - box.x : moved.y - box.y;
     // Only accept the snap if it is a (partial) move in the travel direction.
     const bool sameDirection = d > 0 ? (actual >= -kEps && actual <= d) : (actual <= kEps && actual >= d);
-    if (sameDirection && !level.overlapsSolid(moved)) {
+    if (sameDirection && !level.overlapsSolid(moved, pass)) {
         box = moved;
         return actual;
     }
@@ -68,15 +72,15 @@ float moveAxis(const Level& level, RectF& box, float d, bool horizontal, bool& b
 // After a blocked move along one axis, tries sliding the box sideways (up
 // to `maxNudge` px) around the corner it clipped. Returns the sideways
 // distance applied, or 0 if the obstacle is not just a corner.
-float tryCornerNudge(const Level& level, RectF& box, float d, bool horizontal, float maxNudge) {
+float tryCornerNudge(const Level& level, RectF& box, float d, bool horizontal, float maxNudge, unsigned pass) {
     for (int off = 1; off <= static_cast<int>(maxNudge); ++off) {
         for (int sign : {-1, 1}) {
             RectF shifted = box;
             (horizontal ? shifted.y : shifted.x) += static_cast<float>(sign * off);
-            if (level.overlapsSolid(shifted)) continue;
+            if (level.overlapsSolid(shifted, pass)) continue;
             RectF ahead = shifted;
             (horizontal ? ahead.x : ahead.y) += d;
-            if (level.overlapsSolid(ahead)) continue;
+            if (level.overlapsSolid(ahead, pass)) continue;
             // Slide at most as fast as we were moving, so it feels natural.
             const float amount = static_cast<float>(sign) * std::min(static_cast<float>(off), std::fabs(d));
             (horizontal ? box.y : box.x) += amount;
@@ -99,6 +103,9 @@ char tileToChar(Tile t) {
     case Tile::Hazard: return '^';
     case Tile::SecretWall: return '%';
     case Tile::Exit: return 'E';
+    case Tile::Crate: return 'x';
+    case Tile::Boulder: return 'X';
+    case Tile::TinyGap: return ':';
     }
     return '?';
 }
@@ -152,6 +159,12 @@ bool Level::fromAscii(const std::vector<std::string>& rows, Level& out, std::str
                 cp.pos = tileCenter(x, y) + Vec2{0.0f, 6.0f};
                 cp.hardest = c == 'C' ? Difficulty::Challenge : c == 'k' ? Difficulty::Normal : Difficulty::Relaxed;
                 level.checkpoints.push_back(cp);
+            } else if (c == '*') {
+                level.stars.push_back(tileCenter(x, y));
+            } else if (c == 'g') {
+                level.gems.push_back(tileCenter(x, y));
+            } else if (c >= '1' && c <= '8') {
+                level.powerUps.push_back({static_cast<PowerUpType>(c - '0'), tileCenter(x, y)});
             }
         }
     }
@@ -178,14 +191,14 @@ void Level::setTile(int tx, int ty, Tile t) {
     if (inBounds(tx, ty)) tiles_[static_cast<size_t>(ty * width_ + tx)] = t;
 }
 
-bool Level::overlapsSolid(const RectF& box) const {
+bool Level::overlapsSolid(const RectF& box, unsigned pass) const {
     const int x0 = toTile(box.left());
     const int x1 = toTile(box.right() - kEps);
     const int y0 = toTile(box.top());
     const int y1 = toTile(box.bottom() - kEps);
     for (int ty = y0; ty <= y1; ++ty)
         for (int tx = x0; tx <= x1; ++tx)
-            if (isSolid(tileAt(tx, ty))) return true;
+            if (isSolid(tileAt(tx, ty), pass)) return true;
     return false;
 }
 
@@ -204,7 +217,8 @@ Vec2 Level::tileCenter(int tx, int ty) {
     return {(static_cast<float>(tx) + 0.5f) * kTile, (static_cast<float>(ty) + 0.5f) * kTile};
 }
 
-Vec2 moveAndCollide(const Level& level, const RectF& box, Vec2 delta, float cornerNudge, CollisionResult* result) {
+Vec2 moveAndCollide(const Level& level, const RectF& box, Vec2 delta, float cornerNudge, CollisionResult* result,
+                    unsigned pass) {
     RectF b = box;
     Vec2 moved;
     CollisionResult res;
@@ -220,10 +234,10 @@ Vec2 moveAndCollide(const Level& level, const RectF& box, Vec2 delta, float corn
     for (int i = 0; i < steps; ++i) {
         if (step.x != 0.0f) {
             bool blocked = false;
-            moved.x += moveAxis(level, b, step.x, true, blocked);
+            moved.x += moveAxis(level, b, step.x, true, blocked, pass);
             if (blocked) {
                 const float nudge = (cornerNudge > 0.0f && straightX)
-                                        ? tryCornerNudge(level, b, step.x, true, cornerNudge)
+                                        ? tryCornerNudge(level, b, step.x, true, cornerNudge, pass)
                                         : 0.0f;
                 if (nudge != 0.0f) {
                     moved.y += nudge;
@@ -235,10 +249,10 @@ Vec2 moveAndCollide(const Level& level, const RectF& box, Vec2 delta, float corn
         }
         if (step.y != 0.0f) {
             bool blocked = false;
-            moved.y += moveAxis(level, b, step.y, false, blocked);
+            moved.y += moveAxis(level, b, step.y, false, blocked, pass);
             if (blocked) {
                 const float nudge = (cornerNudge > 0.0f && straightY)
-                                        ? tryCornerNudge(level, b, step.y, false, cornerNudge)
+                                        ? tryCornerNudge(level, b, step.y, false, cornerNudge, pass)
                                         : 0.0f;
                 if (nudge != 0.0f) {
                     moved.x += nudge;

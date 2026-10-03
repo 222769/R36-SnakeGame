@@ -6,14 +6,15 @@ native ARM Linux executable, and it also runs on a normal PC for development.
 
 > **Pick up and play in seconds.**
 
-**Status:** Phases 1–3 of 8 are complete: the engine, input and movement;
-tile maps, collision, a scrolling camera, coins and a level exit; and
-enemies, hearts, hazards, checkpoints and the three difficulties. See
-[TODO.md](TODO.md) for the roadmap.
+**Status:** Phases 1–4 of 8 are complete: the engine, input and movement;
+tile maps, collision, camera, coins and exit; enemies, hearts, hazards,
+checkpoints and difficulty; and stars, gems, the Golden Star, eight
+power-ups and breakable blocks. See [TODO.md](TODO.md) for the roadmap.
 
 ![Title screen](docs/title.png)
 ![Gameplay](docs/gameplay.png)
 ![Enemies](docs/enemies.png)
+![Power-ups](docs/powerups.png)
 ![Level clear](docs/level_clear.png)
 
 ## How to play
@@ -27,6 +28,23 @@ enemies, hearts, hazards, checkpoints and the three difficulties. See
   restart point.
 * **No game over.** Run out of hearts and you go back to the last
   checkpoint with full health, keeping your coins.
+* **Find the three hidden stars** in every level, and the rare gems. Get
+  every star, coin and gem in one run to earn the **Golden Star**.
+* **Power-ups** float in bubbles. You hold one at a time and press **X**
+  to use it:
+
+| Power-up      | Effect                                                     |
+|---------------|------------------------------------------------------------|
+| Speed Shoes   | Run 50% faster                                             |
+| Shield Bubble | Blocks one hit (or one fall into water)                    |
+| Magnet        | Nearby coins fly to you                                    |
+| Super Dash    | Dashes go twice as far and recharge faster                 |
+| Double Coins  | Coins count twice for your score                           |
+| Tiny Mode     | Shrink to slip through little holes in hedges              |
+| Giant Mode    | Grow huge: smash crates and boulders, flatten enemies      |
+| Rainbow Star  | Nothing can hurt you, and enemies you touch are defeated   |
+
+  Dashing smashes wooden crates; only a giant can break boulders.
 
 | Enemy    | What it does                                                    |
 |----------|-----------------------------------------------------------------|
@@ -49,7 +67,7 @@ in Phase 6).
 | D-pad / stick | Arrow keys          | Move                            |
 | A             | Z or Space          | Hop / confirm                   |
 | B             | X or Left Shift     | Dash / back                     |
-| X             | A                   | Use power-up *(Phase 4)*        |
+| X             | A                   | Use the stored power-up         |
 | Y             | S                   | Interact *(Phase 5)*            |
 | Start         | Enter or Esc        | Pause                           |
 | Select        | Backspace or Tab    | Level info                      |
@@ -228,7 +246,7 @@ PocketDash/
 │   ├── BuiltinLevels.*     levels compiled into the game (test meadow)
 │   ├── TileSet.*           per-world procedural tile atlas + visible-tile renderer
 │   ├── Camera.*            dead-zone follow camera with look-ahead and shake
-│   ├── Collectibles.*      coins (stars/gems in Phase 4)
+│   ├── Collectibles.*      coins (with magnet), stars, gems, power-up bubbles, hearts
 │   ├── Effects.*           fixed-size pool of sparkles and dust
 │   ├── AudioManager.*      SDL2_mixer wrapper, silent when audio/files are missing
 │   ├── SaveManager.*       INI-style key=value store, settings persistence
@@ -236,7 +254,7 @@ PocketDash/
 │   ├── UI.*                built-in bitmap font, panels
 │   ├── Draw.*              shape helpers
 │   ├── World.*             the 7 world definitions (themes, rules)
-│   ├── PowerUp.*           power-up types and timers
+│   ├── PowerUp.*           power-up types, durations, active timers and the slot
 │   └── Math.h, Constants.h, Settings.h, SdlPtr.h
 ├── tests/test_main.cpp
 ├── assets/{sprites,audio,fonts,levels}/
@@ -258,8 +276,9 @@ PocketDash/
   text uses a single font atlas, effects live in a fixed pool, and debug
   strings use stack buffers. Only visible tiles are drawn.
 * **Levels are ASCII maps** (`#` hedge, `T` tree, `~` water, `=` bridge,
-  `^` thorns, `c` coin, `h` heart, `s`/`b`/`B`/`m` enemies, `C`/`k`/`r`
-  checkpoints, `P` spawn, `E` exit — see `src/Level.h`). Phase 5 loads them
+  `^` thorns, `x` crate, `X` boulder, `:` tiny gap, `c` coin, `h` heart,
+  `*` star, `g` gem, `1`–`8` power-ups, `s`/`b`/`B`/`m` enemies,
+  `C`/`k`/`r` checkpoints, `P` spawn, `E` exit — see `src/Level.h`). Phase 5 loads them
   from `assets/levels/`.
 * **Gameplay is a pure simulation.** `LevelSession` has no SDL rendering or
   input code. The unit tests play through small ASCII maps (stomping, water

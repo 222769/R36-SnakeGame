@@ -51,6 +51,12 @@ void PowerUpState::consume(PowerUpType type) {
     if (isValid(type)) timers_[static_cast<int>(type)] = 0.0f;
 }
 
+void PowerUpState::extend(PowerUpType type, float seconds) {
+    if (!isValid(type)) return;
+    float& t = timers_[static_cast<int>(type)];
+    if (t < seconds) t = seconds;
+}
+
 void PowerUpState::update(float dt) {
     for (float& t : timers_)
         if (t > 0.0f) t -= dt;

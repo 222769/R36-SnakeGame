@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PowerUp.h"
 #include "SdlPtr.h"
 
 #include <SDL.h>
@@ -33,6 +34,15 @@ public:
     enum EnemyRow { kRowSlime = 0, kRowBeetle = 1, kRowMushroom = 2, kEnemyRows = 3 };
     // Checkpoint sheet: 2 frames of 16x16 (not reached, active).
 
+    // Item sheet: 12x12 frames in a row: star, empty star, gem, then one
+    // icon per power-up (see itemFrame).
+    static constexpr int kItemSize = 12;
+    static constexpr int kItemStar = 0;
+    static constexpr int kItemStarEmpty = 1;
+    static constexpr int kItemGem = 2;
+    static constexpr int kItemFrames = 3 + kPowerUpCount - 1;
+    static constexpr int itemFrame(PowerUpType t) { return 2 + static_cast<int>(t); }
+
     bool create(SDL_Renderer* renderer, const std::string& spriteDir);
 
     SDL_Texture* player() const { return player_.get(); }
@@ -41,6 +51,7 @@ public:
     SDL_Texture* coin() const { return coin_.get(); }
     SDL_Texture* enemies() const { return enemies_.get(); }
     SDL_Texture* checkpoint() const { return checkpoint_.get(); }
+    SDL_Texture* items() const { return items_.get(); }
 
     // Checks every built-in sprite for consistent row widths and known
     // palette characters (used by the unit tests).
@@ -53,6 +64,7 @@ private:
     TexturePtr coin_;
     TexturePtr enemies_;
     TexturePtr checkpoint_;
+    TexturePtr items_;
 };
 
 } // namespace pd

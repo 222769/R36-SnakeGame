@@ -2,6 +2,10 @@
 
 #include "Constants.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+
 namespace pd {
 
 namespace {
@@ -22,15 +26,25 @@ Vec2 bodyCenter(const Player& p) { return p.position() - Vec2{0.0f, 10.0f}; }
 
 } // namespace
 
+namespace {
+constexpr float kMagnetRadius = 4.0f * kTileSize;
+constexpr SDL_Color kChips{196, 136, 74, 255};
+constexpr SDL_Color kShieldBlue{150, 220, 255, 255};
+} // namespace
+
 LevelSession::LevelSession(const Level& level, Difficulty difficulty)
-    : level_(level), difficulty_(difficulty), rules_(difficultyRules(difficulty)) {
+    : source_(level), level_(level), difficulty_(difficulty), rules_(difficultyRules(difficulty)) {
     restart();
 }
 
 void LevelSession::restart() {
+    level_ = source_; // un-smash every block
     player_ = Player(level_.spawn);
     coins_.reset(level_.coins);
     heartPickups_.reset(level_.hearts);
+    items_.reset(level_.stars, level_.gems, level_.powerUps);
+    powers_.clear();
+    goldenStar_ = false;
 
     enemies_.clear();
     enemies_.reserve(level_.enemies.size());
@@ -89,6 +103,7 @@ unsigned LevelSession::update(const PlayerInput& input, float dt) {
     }
 
     time_ += dt;
+    updatePowerUps(input.usePressed, dt, events);
     const unsigned pe = player_.update(input, dt, &level_);
     if (pe & kEventHopped) events |= kSessionHopped;
     if (pe & kEventDashed) {
@@ -100,15 +115,19 @@ unsigned LevelSession::update(const PlayerInput& input, float dt) {
         effects_.spawn(Effects::Type::Dust, player_.position(), kDustColor);
     }
 
+    smashBlocks(events);
     updateEnemies(dt, events);
     if (state_ == State::Playing) updateHazards(events);
-    if (state_ == State::Playing) updatePickups(events);
+    if (state_ == State::Playing) updatePickups(dt, events);
 
     if (state_ == State::Playing && level_.overlapsTile(player_.hitbox(), Tile::Exit)) {
         state_ = State::Cleared;
         stateTime_ = 0.0f;
         player_.stop();
         events |= kSessionCleared;
+        goldenStar_ = items_.starsCollected() == items_.starsTotal() && coins_.collected() == coins_.total() &&
+                      items_.gemsCollected() == items_.gemsTotal();
+        if (goldenStar_) events |= kSessionGoldenStar;
         for (int i = 0; i < 3; ++i)
             effects_.spawn(Effects::Type::Sparkle, level_.exit + Vec2{(i - 1) * 14.0f, -10.0f - i * 6.0f}, kGold);
     }
@@ -128,7 +147,7 @@ void LevelSession::updateEnemies(float dt, unsigned& events) {
 
         if (!playerBox.intersects(e.hitbox())) continue;
         const bool stomp = player_.isFalling() && player_.height() < kStompHeight;
-        if (stomp || player_.isDashing()) {
+        if (stomp || player_.isDashing() || crushesEnemies()) {
             e.defeat();
             ++stats_.enemiesDefeated;
             events |= kSessionStomp;
@@ -158,8 +177,16 @@ void LevelSession::updateHazards(unsigned& events) {
         effects_.spawn(Effects::Type::Splash, feet, kWater);
         ++stats_.splashes;
         events |= kSessionSplash;
-        // A fall during invincibility is free, but doesn't extend it.
-        const bool costsHeart = !player_.isInvincible();
+        // A fall during invincibility (or Rainbow Star) is free, but doesn't
+        // extend it. A shield bubble pops instead of a heart being lost.
+        const bool costsHeart = !player_.isInvincible() && !invulnerable();
+        if (costsHeart && powers_.active(PowerUpType::ShieldBubble)) {
+            powers_.consume(PowerUpType::ShieldBubble);
+            events |= kSessionShieldPop;
+            effects_.spawn(Effects::Type::Sparkle, bodyCenter(player_), kShieldBlue);
+            player_.respawnAt(lastSafe_, true);
+            return;
+        }
         if (costsHeart) {
             --hearts_;
             ++stats_.heartsLost;
@@ -182,8 +209,25 @@ void LevelSession::updateHazards(unsigned& events) {
     }
 }
 
-void LevelSession::updatePickups(unsigned& events) {
-    if (coins_.collect(bodyCenter(player_), &effects_) > 0) events |= kSessionCoin;
+void LevelSession::updatePickups(float dt, unsigned& events) {
+    if (powers_.active(PowerUpType::Magnet)) coins_.attract(bodyCenter(player_), kMagnetRadius, dt);
+    if (const int n = coins_.collect(bodyCenter(player_), &effects_); n > 0) {
+        stats_.coinPoints += n * (powers_.active(PowerUpType::DoubleCoins) ? 2 : 1);
+        events |= kSessionCoin;
+    }
+
+    ItemField::Pickup got[4];
+    const int count = items_.collect(bodyCenter(player_), powers_.stored() == PowerUpType::None, &effects_, got, 4);
+    for (int i = 0; i < count; ++i) {
+        switch (got[i].kind) {
+        case ItemField::Kind::Star: events |= kSessionStar; break;
+        case ItemField::Kind::Gem: events |= kSessionGem; break;
+        case ItemField::Kind::PowerUp:
+            powers_.store(got[i].power);
+            events |= kSessionPowerUpGet;
+            break;
+        }
+    }
 
     if (heartPickups_.collect(bodyCenter(player_), hearts_ < rules_.maxHearts, &effects_)) {
         ++hearts_;
@@ -204,6 +248,15 @@ void LevelSession::updatePickups(unsigned& events) {
 }
 
 void LevelSession::hurt(Vec2 source, unsigned& events) {
+    if (invulnerable()) return;
+    if (powers_.active(PowerUpType::ShieldBubble) && !player_.isInvincible()) {
+        // The bubble pops: knockback and invincibility, but no heart lost.
+        powers_.consume(PowerUpType::ShieldBubble);
+        player_.takeHit(source);
+        events |= kSessionShieldPop;
+        effects_.spawn(Effects::Type::Sparkle, bodyCenter(player_), kShieldBlue);
+        return;
+    }
     if (!player_.takeHit(source)) return; // still invincible
     --hearts_;
     ++stats_.heartsLost;
@@ -218,6 +271,115 @@ void LevelSession::knockOut(unsigned& events) {
     ++stats_.knockOuts;
     player_.stop();
     events |= kSessionKnockedOut;
+}
+
+PlayerModifiers LevelSession::modifiersFromPowers() const {
+    PlayerModifiers m;
+    if (powers_.active(PowerUpType::SpeedShoes)) m.speedScale = 1.5f;
+    if (powers_.active(PowerUpType::SuperDash)) {
+        m.dashTimeScale = 2.0f;
+        m.dashCooldownScale = 0.5f;
+    }
+    if (powers_.active(PowerUpType::TinyMode)) {
+        m.size = 0.5f;
+        m.visualScale = 0.6f;
+        m.pass |= kPassTinyGaps;
+    }
+    if (powers_.active(PowerUpType::GiantMode)) {
+        m.size = 1.45f;
+        m.visualScale = 1.6f;
+    }
+    m.rainbow = powers_.active(PowerUpType::RainbowStar);
+    return m;
+}
+
+void LevelSession::updatePowerUps(bool usePressed, float dt, unsigned& events) {
+    const bool wasTiny = powers_.active(PowerUpType::TinyMode);
+    bool anyBefore = false;
+    for (int i = 1; i < kPowerUpCount; ++i) {
+        const auto t = static_cast<PowerUpType>(i);
+        if (t != PowerUpType::ShieldBubble && powers_.active(t)) anyBefore = true;
+    }
+
+    powers_.update(dt);
+
+    // Never shrink back to normal size inside a tiny gap: Tiny Mode keeps
+    // going until the hero has walked out.
+    if (wasTiny && !powers_.active(PowerUpType::TinyMode)) {
+        PlayerModifiers normal = modifiersFromPowers();
+        if (level_.overlapsSolid(player_.hitboxWith(normal))) powers_.extend(PowerUpType::TinyMode, 0.25f);
+    }
+
+    bool anyAfter = false;
+    for (int i = 1; i < kPowerUpCount; ++i) {
+        const auto t = static_cast<PowerUpType>(i);
+        if (t != PowerUpType::ShieldBubble && powers_.active(t)) anyAfter = true;
+    }
+    if (anyBefore && !anyAfter) events |= kSessionPowerUpEnd;
+
+    if (usePressed && powers_.stored() != PowerUpType::None && tryActivate(powers_.stored(), events))
+        powers_.store(PowerUpType::None);
+
+    player_.setModifiers(modifiersFromPowers());
+}
+
+bool LevelSession::tryActivate(PowerUpType type, unsigned& events) {
+    if (type == PowerUpType::GiantMode) {
+        // Growing must not trap the hero in a wall: find a free spot nearby
+        // for the bigger body, or refuse (the power-up stays in the slot).
+        PlayerModifiers giant = modifiersFromPowers();
+        giant.size = 1.45f;
+        giant.pass = kPassNone;
+        const Vec2 home = player_.position();
+        bool placed = false;
+        for (int r = 0; r <= 12 && !placed; r += 2) {
+            for (int dy = -r; dy <= r && !placed; dy += 2) {
+                for (int dx = -r; dx <= r && !placed; dx += 2) {
+                    if (std::max(std::abs(dx), std::abs(dy)) != r) continue; // ring only
+                    player_.setPosition(home + Vec2{static_cast<float>(dx), static_cast<float>(dy)});
+                    const RectF box = player_.hitboxWith(giant);
+                    placed = !level_.overlapsSolid(box) && !level_.overlapsTile(box, Tile::Water);
+                }
+            }
+        }
+        if (!placed) {
+            player_.setPosition(home);
+            events |= kSessionNoRoom;
+            return false;
+        }
+    }
+    powers_.activate(type);
+    ++stats_.powerUpsUsed;
+    events |= kSessionPowerUpUse;
+    effects_.spawn(Effects::Type::Sparkle, bodyCenter(player_), powerUpInfo(type).color);
+    return true;
+}
+
+void LevelSession::smashBlocks(unsigned& events) {
+    const bool giant = powers_.active(PowerUpType::GiantMode);
+    if (!giant && !player_.isDashing()) return;
+    // Look just beyond the hitbox: a block we bumped into this step is smashed
+    // and the path is clear on the next one.
+    RectF reach = player_.hitbox();
+    reach.x -= 3.0f;
+    reach.y -= 3.0f;
+    reach.w += 6.0f;
+    reach.h += 6.0f;
+    const int x0 = static_cast<int>(std::floor(reach.left() / kTileSize));
+    const int x1 = static_cast<int>(std::floor((reach.right() - 0.001f) / kTileSize));
+    const int y0 = static_cast<int>(std::floor(reach.top() / kTileSize));
+    const int y1 = static_cast<int>(std::floor((reach.bottom() - 0.001f) / kTileSize));
+    for (int ty = y0; ty <= y1; ++ty) {
+        for (int tx = x0; tx <= x1; ++tx) {
+            if (!Level::isBreakable(level_.tileAt(tx, ty), giant)) continue;
+            level_.setTile(tx, ty, Tile::Ground);
+            ++stats_.blocksBroken;
+            events |= kSessionBlockBroken;
+            const Vec2 c = Level::tileCenter(tx, ty);
+            effects_.spawn(Effects::Type::Dust, c + Vec2{0.0f, 8.0f}, kDustColor);
+            effects_.spawn(Effects::Type::Sparkle, c, kChips);
+        }
+    }
 }
 
 bool LevelSession::warpNear(Vec2 target) {

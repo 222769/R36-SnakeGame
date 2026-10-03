@@ -21,6 +21,11 @@ Sound effects (`.wav` or `.ogg`):
 | heart              | a heart pickup is collected    |
 | checkpoint         | a checkpoint flag is touched   |
 | splash             | the player falls in water      |
+| gem                | a gem is collected             |
+| break              | a crate or boulder is smashed  |
+| shield_pop         | the shield bubble absorbs a hit|
+| powerup_use        | a power-up is activated (X)    |
+| denied             | no room to activate Giant Mode |
 
 Music (`.ogg`, `.mp3` or `.wav`, looped): `title`, `meadow`, `boss`.
 

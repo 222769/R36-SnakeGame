@@ -48,6 +48,10 @@ unsigned Player::update(const PlayerInput& input, float dt, const Level* level) 
     if (stunTimer_ > 0.0f) stunTimer_ -= dt;
     if (dashCooldown_ > 0.0f) dashCooldown_ -= dt;
     if (squashTimer_ > 0.0f) squashTimer_ -= dt;
+    clock_ += dt;
+
+    const float maxSpeed = tuning_.maxSpeed * mods_.speedScale;
+    const float acceleration = tuning_.acceleration * mods_.speedScale;
 
     // --- Horizontal (ground plane) movement --------------------------------
     if (dashTimer_ > 0.0f) {
@@ -55,21 +59,21 @@ unsigned Player::update(const PlayerInput& input, float dt, const Level* level) 
         vel_ = dashDir_ * tuning_.dashSpeed;
         if (dashTimer_ <= 0.0f) {
             // Exit the dash at walking speed so it flows straight into running.
-            vel_ = dashDir_ * tuning_.maxSpeed;
-            dashCooldown_ = tuning_.dashCooldown;
+            vel_ = dashDir_ * maxSpeed;
+            dashCooldown_ = tuning_.dashCooldown * mods_.dashCooldownScale;
         }
     } else if (stunTimer_ > 0.0f) {
         vel_ = approach(vel_, Vec2{}, tuning_.friction * 0.5f * dt);
     } else if (input.dashPressed && dashCooldown_ <= 0.0f) {
         // Dash in the stick direction, or straight ahead when idle.
         dashDir_ = move.lengthSq() > 0.04f ? move.normalized() : facingVector(facing_);
-        dashTimer_ = tuning_.dashTime;
+        dashTimer_ = tuning_.dashTime * mods_.dashTimeScale;
         vel_ = dashDir_ * tuning_.dashSpeed;
         updateFacing(dashDir_);
         events |= kEventDashed;
     } else {
-        const Vec2 target = move * tuning_.maxSpeed;
-        float rate = move.lengthSq() > 1e-4f ? tuning_.acceleration : tuning_.friction;
+        const Vec2 target = move * maxSpeed;
+        float rate = move.lengthSq() > 1e-4f ? acceleration : tuning_.friction;
         // Turning around should feel instant: brake and accelerate together.
         if (dot(vel_, target) < 0.0f) rate += tuning_.friction;
         vel_ = approach(vel_, target, rate * dt);
@@ -78,7 +82,7 @@ unsigned Player::update(const PlayerInput& input, float dt, const Level* level) 
 
     if (level) {
         CollisionResult hit;
-        pos_ += moveAndCollide(*level, hitbox(), vel_ * dt, kCornerNudge, &hit);
+        pos_ += moveAndCollide(*level, hitbox(), vel_ * dt, kCornerNudge * mods_.size, &hit, mods_.pass);
         if (hit.hitX) {
             vel_.x = 0.0f;
             dashDir_.x = 0.0f;
@@ -111,7 +115,7 @@ unsigned Player::update(const PlayerInput& input, float dt, const Level* level) 
     const float speed = vel_.length();
     if (speed > 12.0f && !isAirborne()) {
         // Faster movement = faster steps.
-        animTimer_ += dt * std::max(0.5f, speed / tuning_.maxSpeed);
+        animTimer_ += dt * std::max(0.5f, speed / maxSpeed);
         if (animTimer_ >= 0.12f) {
             animTimer_ -= 0.12f;
             animFrame_ ^= 1;
@@ -152,9 +156,14 @@ void Player::respawnAt(Vec2 pos, bool freshInvincibility) {
     facing_ = Facing::Down;
 }
 
-RectF Player::hitbox() const {
-    // Feet-level box: top-down games feel fairest when only the lower body collides.
-    return RectF{pos_.x - kHitboxW * 0.5f, pos_.y - kHitboxH + 2.0f, kHitboxW, kHitboxH};
+RectF Player::hitbox() const { return hitboxWith(mods_); }
+
+RectF Player::hitboxWith(const PlayerModifiers& m) const {
+    // Feet-level box: top-down games feel fairest when only the lower body
+    // collides. It scales around the feet, so growing never lifts the hero.
+    const float w = kHitboxW * m.size;
+    const float h = kHitboxH * m.size;
+    return RectF{pos_.x - w * 0.5f, pos_.y - h + 2.0f * m.size, w, h};
 }
 
 void Player::constrainTo(const RectF& area) {
@@ -182,7 +191,8 @@ void Player::render(SDL_Renderer* r, SDL_Texture* sheet, Vec2 camera) const {
     // Shadow shrinks as the player rises so hop height is easy to read.
     const float lift = std::min(1.0f, z_ / 30.0f);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    draw::fillEllipse(r, sx, sy + 2, static_cast<int>(11 - 4 * lift), static_cast<int>(4 - 1 * lift),
+    const float vs = mods_.visualScale;
+    draw::fillEllipse(r, sx, sy + 2, static_cast<int>((11 - 4 * lift) * vs), static_cast<int>((4 - 1 * lift) * vs),
                       SDL_Color{0, 0, 0, static_cast<Uint8>(90 - 40 * lift)});
 
     if (!sheet) return;
@@ -201,8 +211,8 @@ void Player::render(SDL_Renderer* r, SDL_Texture* sheet, Vec2 camera) const {
     const SDL_Rect src{animFrame_ * Sprites::kPlayerFrameW, row * Sprites::kPlayerFrameH, Sprites::kPlayerFrameW,
                        Sprites::kPlayerFrameH};
 
-    int w = Sprites::kPlayerFrameW * kPixelScale;
-    int h = Sprites::kPlayerFrameH * kPixelScale;
+    int w = static_cast<int>(std::lround(Sprites::kPlayerFrameW * kPixelScale * vs));
+    int h = static_cast<int>(std::lround(Sprites::kPlayerFrameH * kPixelScale * vs));
     if (squashTimer_ > 0.0f) { // landing squash
         w += 6;
         h -= 6;
@@ -225,7 +235,16 @@ void Player::render(SDL_Renderer* r, SDL_Texture* sheet, Vec2 camera) const {
     }
 
     const SDL_Rect dst{sx - w / 2, baseY - h, w, h};
+    if (mods_.rainbow) {
+        // Cycle through bright hues (three phase-shifted sines).
+        const float t = clock_ * 8.0f;
+        auto ch = [t](float phase) {
+            return static_cast<Uint8>(150 + 105 * (0.5f + 0.5f * std::sin(t + phase)));
+        };
+        SDL_SetTextureColorMod(sheet, ch(0.0f), ch(2.094f), ch(4.189f));
+    }
     SDL_RenderCopyEx(r, sheet, &src, &dst, 0.0, nullptr, flip);
+    if (mods_.rainbow) SDL_SetTextureColorMod(sheet, 255, 255, 255);
 }
 
 } // namespace pd

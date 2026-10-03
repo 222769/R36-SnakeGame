@@ -33,6 +33,11 @@ const char* AudioManager::sfxName(Sfx sfx) {
     case Sfx::Heart: return "heart";
     case Sfx::Checkpoint: return "checkpoint";
     case Sfx::Splash: return "splash";
+    case Sfx::Gem: return "gem";
+    case Sfx::Break: return "break";
+    case Sfx::ShieldPop: return "shield_pop";
+    case Sfx::PowerUpUse: return "powerup_use";
+    case Sfx::Denied: return "denied";
     case Sfx::Count: break;
     }
     return "unknown";

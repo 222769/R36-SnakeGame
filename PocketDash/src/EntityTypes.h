@@ -4,6 +4,7 @@
 // from the runtime classes so Level stays free of gameplay/rendering code.
 
 #include "Math.h"
+#include "PowerUp.h"
 #include "Settings.h"
 
 namespace pd {
@@ -31,6 +32,11 @@ struct EnemySpawn {
 struct CheckpointSpawn {
     Vec2 pos;
     Difficulty hardest = Difficulty::Challenge;
+};
+
+struct PowerUpSpawn {
+    PowerUpType type = PowerUpType::SpeedShoes;
+    Vec2 pos;
 };
 
 } // namespace pd

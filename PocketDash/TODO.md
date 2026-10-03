@@ -99,15 +99,31 @@ Legend: `[x]` done · `[ ]` to do · `[~]` partly done / skeleton in place
 - [x] Bugs found by the tests: water rescues kept refreshing invincibility, so repeated falls
       were free. The debug warp could drop the hero onto the enemy it was aiming at.
 
-## Phase 4: Collectibles, dash challenges, power-ups
+## ✅ Phase 4: Collectibles, dash challenges, power-ups (complete)
 
-- [ ] Stars (3 per level, hidden) and gems (rare)
-- [ ] Golden Star (all objectives in one level)
-- [ ] Power-up pickups and the stored slot (X to use). `PowerUpState` already exists.
-  - [ ] Speed Shoes, Shield Bubble, Magnet, Super Dash, Double Coins
-  - [ ] Tiny Mode (small gaps), Giant Mode (smash crates), Rainbow Star (invincible)
-- [ ] Dash-breakable blocks and dash gates (for 1-5 Dash Valley)
-- [ ] HUD: coin counter, stars found, stored power-up icon with timer ring
+- [x] Stars (`*`, three per level), shown as HUD slots; gems (`g`) with a HUD counter
+- [x] Golden Star for clearing a level with every star, coin and gem in one run
+- [x] Power-up bubbles (`1`–`8`), a one-slot inventory (X uses it). While the slot is full,
+      other bubbles stay on the ground for later.
+  - [x] Speed Shoes (1.5x speed), Shield Bubble (absorbs one hit or fall), Magnet (pulls coins
+        within 4 tiles), Super Dash (2x dash length, half cooldown), Double Coins (coins count
+        twice for score)
+  - [x] Tiny Mode (slips through `:` tiny gaps, never ends while inside one)
+  - [x] Giant Mode (smashes crates and boulders, crushes enemies; refuses to activate without
+        room, so it can't trap you)
+  - [x] Rainbow Star (invulnerable, defeats enemies on touch, colour-cycling hero)
+- [x] Breakable blocks: `x` crates (dash or giant), `X` boulders (giant only). The session works
+      on a level copy and restart restores it; tile art is re-baked when a block breaks.
+- [x] HUD: star slots, gem counter, stored power-up with an X hint, active power-ups with draining
+      (and end-blinking) timer bars, pulsing x2 badge for Double Coins, shield bubble around the hero
+- [x] Results panel: stars pop in one by one, gems, GOLDEN STAR banner
+- [x] Test level: three stars hidden behind the secret hedge, crates, and a tiny-gap nook; a gem
+      sealed by a boulder; all eight power-ups
+- [x] Tests: stars/gems/golden star, power-up slot rules and expiry, speed/super-dash/size
+      modifiers, shield, magnet + double coins, tiny gaps (including no-room Giant and not shrinking
+      inside a gap), giant smashing/crushing and restart restoring blocks, dash vs crates, rainbow.
+      The level test checks every collectible is reachable, and that any boulders or tiny gaps come
+      with a reachable Giant or Tiny power-up.
 
 ## Phase 5: Data-driven levels + World 1
 

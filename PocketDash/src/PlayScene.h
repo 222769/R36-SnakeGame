@@ -32,6 +32,8 @@ private:
     void updateCleared();
     void renderWorld(SDL_Renderer* r, Vec2 cam) const;
     void renderHud(SDL_Renderer* r) const;
+    void renderCollectionHud(SDL_Renderer* r) const;
+    void renderPowerHud(SDL_Renderer* r) const;
     void renderBanner(SDL_Renderer* r) const;
     void renderKnockOut(SDL_Renderer* r, Vec2 cam) const;
     void renderPauseMenu(SDL_Renderer* r) const;

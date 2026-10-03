@@ -18,6 +18,7 @@ struct PlayerInput {
     Vec2 move;                // length 0..1
     bool hopPressed = false;  // A
     bool dashPressed = false; // B
+    bool usePressed = false;  // X: use the stored power-up (handled by LevelSession)
 };
 
 // Movement feel. All speeds in pixels/second at 640x480.
@@ -33,6 +34,23 @@ struct PlayerTuning {
     float knockbackSpeed = 300.0f;
     float stunTime = 0.22f;         // no control after being hit
     float invincibleTime = 1.3f;
+};
+
+// Temporary changes from power-ups, applied on top of the tuning.
+struct PlayerModifiers {
+    float speedScale = 1.0f;     // walking speed and acceleration (Speed Shoes)
+    float dashTimeScale = 1.0f;  // dash length (Super Dash)
+    float dashCooldownScale = 1.0f;
+    float size = 1.0f;           // hitbox scale (Tiny / Giant)
+    float visualScale = 1.0f;    // sprite scale
+    unsigned pass = 0;           // CollisionPass flags (Tiny Mode slips through tiny gaps)
+    bool rainbow = false;        // Rainbow Star colour cycling
+
+    bool operator==(const PlayerModifiers& o) const {
+        return speedScale == o.speedScale && dashTimeScale == o.dashTimeScale &&
+               dashCooldownScale == o.dashCooldownScale && size == o.size && visualScale == o.visualScale &&
+               pass == o.pass && rainbow == o.rainbow;
+    }
 };
 
 // Bit flags returned from Player::update so the scene can react with
@@ -95,6 +113,12 @@ public:
     bool isInvincible() const { return invincibleTimer_ > 0.0f; }
     bool canDash() const { return dashCooldown_ <= 0.0f && !isDashing(); }
 
+    void setModifiers(const PlayerModifiers& m) { mods_ = m; }
+    const PlayerModifiers& modifiers() const { return mods_; }
+    // Hitbox this player would have with different modifiers (e.g. to check
+    // there is room before growing).
+    RectF hitboxWith(const PlayerModifiers& m) const;
+
     PlayerTuning& tuning() { return tuning_; }
     const PlayerTuning& tuning() const { return tuning_; }
 
@@ -105,6 +129,8 @@ private:
     void updateFacing(Vec2 dir);
 
     PlayerTuning tuning_;
+    PlayerModifiers mods_;
+    float clock_ = 0.0f; // drives the rainbow tint
     Vec2 pos_;
     Vec2 vel_;
     float z_ = 0.0f;

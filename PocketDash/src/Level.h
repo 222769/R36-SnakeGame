@@ -23,19 +23,31 @@ enum class Tile : uint8_t {
     Hazard,     // thorns: hurt on touch unless hopping over them
     SecretWall, // looks like a hedge, but can be walked through
     Exit,       // touching it completes the level
+    Crate,      // solid; smashed by a dash or by Giant Mode
+    Boulder,    // solid; only Giant Mode can smash it
+    TinyGap,    // a hole in the hedge: solid unless the player is in Tiny Mode
+};
+
+// Collision exceptions, e.g. Tiny Mode slipping through tiny gaps.
+enum CollisionPass : unsigned {
+    kPassNone = 0,
+    kPassTinyGaps = 1u << 0,
 };
 
 // One ASCII map character per tile (also used by the Phase 5 level files).
 // Tiles:
 //   .  ground      #  hedge wall   T  tree     o  rock
 //   ~  water       =  bridge       ^  thorns   %  secret wall
-//   E  exit
+//   x  crate       X  boulder      :  tiny gap E  exit
 // Entities (placed on ground):
 //   P  player spawn    c  coin          h  heart pickup
 //   s  slime           b  beetle (patrols left/right)
 //   m  mushroom        B  beetle (patrols up/down)
 //   C  checkpoint (all difficulties)
 //   k  checkpoint (Relaxed + Normal)    r  checkpoint (Relaxed only)
+//   *  star (3 per level)  g  gem
+//   1-8  power-up: 1 speed shoes, 2 shield, 3 magnet, 4 super dash,
+//        5 double coins, 6 tiny, 7 giant, 8 rainbow star
 char tileToChar(Tile t);
 
 // Result of a collision move (see moveAndCollide).
@@ -66,11 +78,16 @@ public:
     Tile tileAtPixel(float px, float py) const;
     void setTile(int tx, int ty, Tile t);
 
-    static bool isSolid(Tile t) { return t == Tile::Wall || t == Tile::Tree || t == Tile::Rock; }
+    static bool isSolid(Tile t, unsigned pass = kPassNone) {
+        if (t == Tile::TinyGap) return (pass & kPassTinyGaps) == 0;
+        return t == Tile::Wall || t == Tile::Tree || t == Tile::Rock || t == Tile::Crate || t == Tile::Boulder;
+    }
+    // Can this tile be smashed? Crates by a dash or a giant, boulders only by a giant.
+    static bool isBreakable(Tile t, bool giant) { return t == Tile::Crate || (giant && t == Tile::Boulder); }
     // Tiles that are walkable but dangerous (enemies avoid them too).
     static bool isDanger(Tile t) { return t == Tile::Water || t == Tile::Hazard; }
-    // True if any tile overlapped by `box` is solid.
-    bool overlapsSolid(const RectF& box) const;
+    // True if any tile overlapped by `box` is solid (given collision exceptions).
+    bool overlapsSolid(const RectF& box, unsigned pass = kPassNone) const;
     // True if any tile overlapped by `box` is of type `t`.
     bool overlapsTile(const RectF& box, Tile t) const;
 
@@ -86,6 +103,9 @@ public:
     std::vector<Vec2> hearts;
     std::vector<EnemySpawn> enemies;
     std::vector<CheckpointSpawn> checkpoints;
+    std::vector<Vec2> stars;
+    std::vector<Vec2> gems;
+    std::vector<PowerUpSpawn> powerUps;
 
 private:
     int width_ = 0;
@@ -103,6 +123,6 @@ private:
 //
 // Returns the distance actually moved.
 Vec2 moveAndCollide(const Level& level, const RectF& box, Vec2 delta, float cornerNudge = 0.0f,
-                    CollisionResult* result = nullptr);
+                    CollisionResult* result = nullptr, unsigned pass = kPassNone);
 
 } // namespace pd

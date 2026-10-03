@@ -34,6 +34,8 @@ public:
         kBridgeV, kBridgeH,                     // walk north-south / east-west
         kThorns,
         kExit0, kExit1,
+        kCrate, kBoulder,
+        kTinyGap,                               // hedge with a little mouse-hole
         kArtCount
     };
 

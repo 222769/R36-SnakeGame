@@ -52,6 +52,7 @@ PlayScene::PlayScene(Game& game) : Scene(game), camera_(kScreenWidth, kScreenHei
 
 void PlayScene::restart() {
     session_->restart();
+    tiles_.prepare(session_->level()); // smashed blocks come back
     camera_.setShakeEnabled(game_.settings().screenShake);
     camera_.snapTo(session_->player().position());
     overlay_ = Overlay::None;
@@ -117,6 +118,7 @@ void PlayScene::update(float dt) {
     pin.move = in.moveVector();
     pin.hopPressed = in.pressed(Action::A);
     pin.dashPressed = in.pressed(Action::B);
+    pin.usePressed = in.pressed(Action::X);
     handleEvents(session_->update(pin, dt));
 
     const Player& player = session_->player();
@@ -150,6 +152,20 @@ void PlayScene::handleEvents(unsigned events) {
         hudHurt_ = 0.5f;
     }
     if (events & kSessionCleared) audio.play(Sfx::LevelComplete);
+    if (events & kSessionStar) audio.play(Sfx::Star);
+    if (events & kSessionGem) audio.play(Sfx::Gem);
+    if (events & kSessionPowerUpGet) audio.play(Sfx::PowerUp);
+    if (events & kSessionPowerUpUse) audio.play(Sfx::PowerUpUse);
+    if (events & kSessionShieldPop) {
+        audio.play(Sfx::ShieldPop);
+        camera_.shake(3.0f, 0.15f);
+    }
+    if (events & kSessionNoRoom) audio.play(Sfx::Denied);
+    if (events & kSessionBlockBroken) {
+        audio.play(Sfx::Break);
+        camera_.shake(3.0f, 0.12f);
+        tiles_.prepare(session_->level()); // re-pick tile art around the hole
+    }
 }
 
 void PlayScene::updateCleared() {
@@ -230,6 +246,7 @@ void PlayScene::renderWorld(SDL_Renderer* r, Vec2 cam) const {
     }
     session_->coins().render(r, sprites.coin(), cam, animTime_);
     session_->heartPickups().render(r, sprites.heartFull(), cam, animTime_);
+    session_->items().render(r, sprites.items(), cam, animTime_);
 
     // Characters, back to front: enemies behind the player first.
     const Player& player = session_->player();
@@ -237,6 +254,14 @@ void PlayScene::renderWorld(SDL_Renderer* r, Vec2 cam) const {
     for (const Enemy& e : session_->enemies())
         if (e.position().y <= py) e.render(r, sprites.enemies(), cam);
     player.render(r, sprites.player(), cam);
+    if (session_->powers().active(PowerUpType::ShieldBubble)) {
+        // Wobbling translucent bubble around the hero.
+        const Vec2 c = player.position() - cam - Vec2{0.0f, 14.0f * player.modifiers().visualScale + player.height()};
+        const int radius = static_cast<int>((20.0f + std::sin(animTime_ * 6.0f) * 1.5f) * player.modifiers().visualScale);
+        draw::fillCircle(r, static_cast<int>(c.x), static_cast<int>(c.y), radius, SDL_Color{150, 220, 255, 60});
+        draw::fillCircle(r, static_cast<int>(c.x) - radius / 3, static_cast<int>(c.y) - radius / 3, 3,
+                         SDL_Color{255, 255, 255, 180});
+    }
     for (const Enemy& e : session_->enemies())
         if (e.position().y > py) e.render(r, sprites.enemies(), cam);
 
@@ -258,6 +283,9 @@ void PlayScene::renderHud(SDL_Renderer* r) const {
         SDL_RenderCopy(r, tex, nullptr, &dst);
     }
 
+    renderCollectionHud(r);
+    renderPowerHud(r);
+
     // Coin counter and clock, top right.
     const CoinField& coins = session_->coins();
     char coinText[16];
@@ -272,10 +300,90 @@ void PlayScene::renderHud(SDL_Renderer* r) const {
         SDL_RenderCopy(r, coin, &src, &dst);
     }
     font.drawShadowed(r, panelX + 42, 16, coinText, 3, ui::kYellow);
+    if (session_->powers().active(PowerUpType::DoubleCoins)) {
+        // "x2" badge that pulses while Double Coins lasts.
+        const int pulse = static_cast<int>(std::fabs(std::sin(animTime_ * 6.0f)) * 3.0f);
+        font.drawShadowed(r, panelX - 44 - pulse, 16, "x2", 3, ui::kYellow);
+    }
 
     char clock[24];
     formatTime(clock, sizeof(clock), session_->time(), false);
     font.drawShadowed(r, kScreenWidth - BitmapFont::textWidth(clock, 2) - 12, 52, clock, 2, ui::kWhite);
+}
+
+void PlayScene::renderCollectionHud(SDL_Renderer* r) const {
+    // Star slots (top centre), plus a gem counter when the level has gems.
+    SDL_Texture* items = game_.sprites().items();
+    if (!items) return;
+    const ItemField& it = session_->items();
+    const int stars = it.starsTotal();
+    const bool gems = it.gemsTotal() > 0;
+    if (stars == 0 && !gems) return;
+
+    constexpr int icon = Sprites::kItemSize * 2;
+    const int width = stars * (icon + 4) + (gems ? icon + 40 : 0) + 12;
+    const int x0 = kScreenWidth / 2 - width / 2;
+    ui::drawPanel(r, SDL_Rect{x0, 8, width, 38}, SDL_Color{20, 16, 40, 140}, SDL_Color{0, 0, 0, 0});
+    int x = x0 + 8;
+    for (int i = 0; i < stars; ++i) {
+        const int frame = it.starCollected(i) ? Sprites::kItemStar : Sprites::kItemStarEmpty;
+        const SDL_Rect src{frame * Sprites::kItemSize, 0, Sprites::kItemSize, Sprites::kItemSize};
+        const SDL_Rect dst{x, 15, icon, icon};
+        SDL_RenderCopy(r, items, &src, &dst);
+        x += icon + 4;
+    }
+    if (gems) {
+        const SDL_Rect src{Sprites::kItemGem * Sprites::kItemSize, 0, Sprites::kItemSize, Sprites::kItemSize};
+        const SDL_Rect dst{x + 2, 15, icon, icon};
+        SDL_RenderCopy(r, items, &src, &dst);
+        char text[8];
+        std::snprintf(text, sizeof(text), "%d", it.gemsCollected());
+        game_.font().drawShadowed(r, x + icon + 6, 19, text, 2, ui::kMint);
+    }
+}
+
+void PlayScene::renderPowerHud(SDL_Renderer* r) const {
+    // Below the hearts: the stored power-up (press X), then active ones with
+    // a shrinking timer bar each.
+    SDL_Texture* items = game_.sprites().items();
+    if (!items) return;
+    const PowerUpState& powers = session_->powers();
+    const BitmapFont& font = game_.font();
+    constexpr int icon = Sprites::kItemSize * 2;
+    int x = 6;
+    const int y = 50;
+
+    auto drawIcon = [&](PowerUpType t, int ix, int iy) {
+        const SDL_Rect src{Sprites::itemFrame(t) * Sprites::kItemSize, 0, Sprites::kItemSize, Sprites::kItemSize};
+        const SDL_Rect dst{ix, iy, icon, icon};
+        if (t == PowerUpType::RainbowStar)
+            SDL_SetTextureColorMod(items, 255, static_cast<Uint8>(160.0f + std::sin(animTime_ * 6.0f) * 90.0f), 200);
+        SDL_RenderCopy(r, items, &src, &dst);
+        if (t == PowerUpType::RainbowStar) SDL_SetTextureColorMod(items, 255, 255, 255);
+    };
+
+    if (powers.stored() != PowerUpType::None) {
+        const SDL_Color c = powerUpInfo(powers.stored()).color;
+        ui::drawPanel(r, SDL_Rect{x, y, 48, 40}, SDL_Color{20, 16, 40, 160}, c);
+        drawIcon(powers.stored(), x + 6, y + 8);
+        font.drawShadowed(r, x + 36, y + 26, "X", 1, ui::kWhite);
+        x += 54;
+    }
+    for (int i = 1; i < kPowerUpCount; ++i) {
+        const auto t = static_cast<PowerUpType>(i);
+        if (!powers.active(t)) continue;
+        drawIcon(t, x + 4, y + 4);
+        const float duration = powerUpInfo(t).duration;
+        if (duration > 0.0f) {
+            const float frac = std::clamp(powers.timeLeft(t) / duration, 0.0f, 1.0f);
+            draw::fillRect(r, x + 4, y + 31, icon, 4, SDL_Color{20, 16, 40, 180});
+            // Blink in the last two seconds so the end is no surprise.
+            const bool ending = powers.timeLeft(t) < 2.0f && static_cast<int>(animTime_ * 8.0f) % 2 == 0;
+            if (!ending)
+                draw::fillRect(r, x + 4, y + 31, static_cast<int>(icon * frac), 4, powerUpInfo(t).color);
+        }
+        x += icon + 8;
+    }
 }
 
 void PlayScene::renderBanner(SDL_Renderer* r) const {
@@ -344,24 +452,24 @@ void PlayScene::renderInfoPanel(SDL_Renderer* r) const {
     font.drawCentered(r, kScreenWidth / 2, 88, title, 3, ui::kYellow);
     font.drawCentered(r, kScreenWidth / 2, 122, worldDef(level_.world).name, 2, ui::kMint);
 
-    char coins[48];
-    std::snprintf(coins, sizeof(coins), "COINS: %d / %d", session_->coins().collected(), session_->coins().total());
+    const ItemField& items = session_->items();
+    char found[64];
+    std::snprintf(found, sizeof(found), "COINS %d/%d  STARS %d/%d", session_->coins().collected(),
+                  session_->coins().total(), items.starsCollected(), items.starsTotal());
     char clock[24];
     formatTime(clock, sizeof(clock), session_->time(), false);
-    char time[40];
-    std::snprintf(time, sizeof(time), "TIME:  %s", clock);
-    char mode[40];
-    std::snprintf(mode, sizeof(mode), "MODE:  %s", difficultyName(session_->difficulty()));
+    char time[64];
+    std::snprintf(time, sizeof(time), "TIME %s  MODE %s", clock, difficultyName(session_->difficulty()));
 
     const char* lines[] = {
         "GOAL: REACH THE FLAG!",
-        coins,
+        found,
         time,
-        mode,
         "",
         "D-PAD / STICK   MOVE",
         "A               HOP / STOMP",
-        "B               DASH",
+        "B               DASH / SMASH",
+        "X               USE POWER-UP",
         "START           PAUSE",
         "SELECT+START    QUIT",
     };
@@ -377,36 +485,59 @@ void PlayScene::renderClearPanel(SDL_Renderer* r) const {
     const BitmapFont& font = game_.font();
     // The panel sits in the lower part of the screen so the hero's victory
     // hops (upper half of the view) stay visible. It grows open over 0.25 s.
-    constexpr int kTop = 250;
-    constexpr int kHeight = 216;
+    constexpr int kTop = 232;
+    constexpr int kHeight = 240;
     const float st = session_->stateTime();
     const float grow = std::min(1.0f, st / 0.25f);
     const int h = static_cast<int>(kHeight * grow);
     ui::dimScreen(r, static_cast<Uint8>(60 * grow));
-    ui::drawPanel(r, SDL_Rect{kScreenWidth / 2 - 190, kTop + (kHeight - h) / 2, 380, h});
+    ui::drawPanel(r, SDL_Rect{kScreenWidth / 2 - 200, kTop + (kHeight - h) / 2, 400, h});
     if (grow < 1.0f) return;
 
     const int bounce = static_cast<int>(std::lround(std::fabs(std::sin(st * 4.0f)) * -6.0f));
-    font.drawCentered(r, kScreenWidth / 2, kTop + 16 + bounce, "LEVEL CLEAR!", 4, ui::kYellow);
+    font.drawCentered(r, kScreenWidth / 2, kTop + 14 + bounce, "LEVEL CLEAR!", 4, ui::kYellow);
+
+    // Stars found, popping in one by one.
+    const ItemField& items = session_->items();
+    if (SDL_Texture* tex = game_.sprites().items(); tex && items.starsTotal() > 0) {
+        constexpr int icon = Sprites::kItemSize * 3;
+        const int total = items.starsTotal();
+        const int x0 = kScreenWidth / 2 - (total * (icon + 6) - 6) / 2;
+        for (int i = 0; i < total; ++i) {
+            if (st < 0.3f + 0.15f * static_cast<float>(i)) continue;
+            const int frame = items.starCollected(i) ? Sprites::kItemStar : Sprites::kItemStarEmpty;
+            const SDL_Rect src{frame * Sprites::kItemSize, 0, Sprites::kItemSize, Sprites::kItemSize};
+            const SDL_Rect dst{x0 + i * (icon + 6), kTop + 52, icon, icon};
+            SDL_RenderCopy(r, tex, &src, &dst);
+        }
+    }
 
     const CoinField& coinField = session_->coins();
-    char coins[32];
-    std::snprintf(coins, sizeof(coins), "COINS  %d/%d", coinField.collected(), coinField.total());
-    font.drawCentered(r, kScreenWidth / 2, kTop + 60, coins, 3, ui::kWhite);
+    char line[64];
+    std::snprintf(line, sizeof(line), "COINS  %d/%d", coinField.collected(), coinField.total());
+    font.drawCentered(r, kScreenWidth / 2, kTop + 98, line, 3, ui::kWhite);
     char clock[24];
     formatTime(clock, sizeof(clock), session_->time(), true);
-    char time[40];
-    std::snprintf(time, sizeof(time), "TIME  %s", clock);
-    font.drawCentered(r, kScreenWidth / 2, kTop + 90, time, 3, ui::kWhite);
-    char foes[40];
-    std::snprintf(foes, sizeof(foes), "FOES DEFEATED  %d", session_->stats().enemiesDefeated);
-    font.drawCentered(r, kScreenWidth / 2, kTop + 122, foes, 2, ui::kWhite);
-    if (coinField.collected() == coinField.total())
-        font.drawCentered(r, kScreenWidth / 2, kTop + 144, "ALL COINS!", 2, ui::kMint);
+    std::snprintf(line, sizeof(line), "TIME  %s", clock);
+    font.drawCentered(r, kScreenWidth / 2, kTop + 126, line, 3, ui::kWhite);
+    if (items.gemsTotal() > 0)
+        std::snprintf(line, sizeof(line), "FOES %d   GEMS %d/%d", session_->stats().enemiesDefeated, items.gemsCollected(),
+                      items.gemsTotal());
+    else
+        std::snprintf(line, sizeof(line), "FOES DEFEATED  %d", session_->stats().enemiesDefeated);
+    font.drawCentered(r, kScreenWidth / 2, kTop + 156, line, 2, ui::kWhite);
+
+    if (session_->goldenStar()) {
+        // The big reward: everything found in one run.
+        const Uint8 g = static_cast<Uint8>(200.0f + 55.0f * std::sin(st * 8.0f));
+        font.drawCentered(r, kScreenWidth / 2, kTop + 178, "GOLDEN STAR!", 2, SDL_Color{255, g, 60, 255});
+    } else if (coinField.collected() == coinField.total()) {
+        font.drawCentered(r, kScreenWidth / 2, kTop + 178, "ALL COINS!", 2, ui::kMint);
+    }
 
     if (st >= kClearInputDelay) {
-        font.drawCentered(r, kScreenWidth / 2, kTop + 168, "A  PLAY AGAIN", 2, ui::kWhite);
-        font.drawCentered(r, kScreenWidth / 2, kTop + 190, "B  TITLE", 2, ui::kGrey);
+        font.drawCentered(r, kScreenWidth / 2, kTop + 200, "A  PLAY AGAIN", 2, ui::kWhite);
+        font.drawCentered(r, kScreenWidth / 2, kTop + 220, "B  TITLE", 2, ui::kGrey);
     }
 }
 
@@ -445,7 +576,7 @@ void PlayScene::renderDebug(SDL_Renderer* r) const {
     const int pty = static_cast<int>(std::floor(player.position().y / kTileSize));
     for (int ty = pty - 2; ty <= pty + 2; ++ty) {
         for (int tx = ptx - 2; tx <= ptx + 2; ++tx) {
-            const Tile t = level_.tileAt(tx, ty);
+            const Tile t = session_->level().tileAt(tx, ty);
             const RectF box{static_cast<float>(tx * kTileSize), static_cast<float>(ty * kTileSize),
                             static_cast<float>(kTileSize), static_cast<float>(kTileSize)};
             if (Level::isSolid(t)) draw::rectOutline(r, toScreen(box), SDL_Color{255, 60, 60, 255});

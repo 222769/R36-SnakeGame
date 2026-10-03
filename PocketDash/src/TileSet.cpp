@@ -188,6 +188,48 @@ void paintExit(const Painter& p, const WorldTheme& t, int frame) {
     p.px(7, 3, shade(flag, 1.3f));
 }
 
+void paintCrate(const Painter& p, const WorldTheme& t) {
+    paintGrass(p, t.ground, 0);
+    const SDL_Color dark{110, 66, 34, 255};
+    const SDL_Color wood{196, 136, 74, 255};
+    const SDL_Color light{230, 178, 110, 255};
+    p.ellipse(8, 14, 7, 1, shade(t.ground, 0.7f));
+    p.rect(1, 2, 14, 12, dark);
+    p.rect(2, 3, 12, 10, wood);
+    // Diagonal brace and frame: reads clearly as "breakable box".
+    for (int i = 0; i < 10; ++i) p.rect(3 + i, 3 + i, 2, 1, dark);
+    p.rect(2, 3, 12, 1, light);
+    p.rect(2, 7, 12, 1, dark);
+    p.rect(2, 3, 1, 10, light);
+}
+
+void paintBoulder(const Painter& p, const WorldTheme& t) {
+    paintGrass(p, t.ground, 1);
+    p.ellipse(8, 14, 7, 1, shade(t.ground, 0.7f));
+    p.circle(8, 8, 7, SDL_Color{96, 92, 112, 255});
+    p.circle(8, 7, 6, SDL_Color{132, 128, 150, 255});
+    p.circle(6, 5, 2, SDL_Color{180, 176, 196, 255});
+    // Big crack: hints that something strong could smash it.
+    const SDL_Color crack{60, 56, 74, 255};
+    p.px(9, 3, crack);
+    p.px(9, 4, crack);
+    p.px(10, 5, crack);
+    p.px(10, 6, crack);
+    p.px(9, 7, crack);
+    p.px(11, 7, crack);
+    p.px(12, 8, crack);
+}
+
+void paintTinyGap(const Painter& p, const WorldTheme& t) {
+    paintHedgeTop(p, t, false);
+    // A small arched hole at the bottom: only a tiny hero fits.
+    const SDL_Color hole{24, 20, 36, 255};
+    p.rect(6, 10, 4, 6, hole);
+    p.rect(5, 11, 6, 5, hole);
+    p.px(5, 10, shade(t.wall, 0.7f));
+    p.px(10, 10, shade(t.wall, 0.7f));
+}
+
 } // namespace
 
 bool TileSet::build(SDL_Renderer* renderer, const WorldTheme& theme) {
@@ -215,6 +257,9 @@ bool TileSet::build(SDL_Renderer* renderer, const WorldTheme& theme) {
     paintThorns(slot(kThorns), theme);
     paintExit(slot(kExit0), theme, 0);
     paintExit(slot(kExit1), theme, 1);
+    paintCrate(slot(kCrate), theme);
+    paintBoulder(slot(kBoulder), theme);
+    paintTinyGap(slot(kTinyGap), theme);
 
     atlas_.reset(SDL_CreateTextureFromSurface(renderer, s.get()));
     if (!atlas_) SDL_Log("[tiles] Failed to create tile atlas: %s", SDL_GetError());
@@ -228,7 +273,7 @@ void TileSet::prepare(const Level& level) {
 
     auto hedgeLike = [&](int x, int y) {
         const Tile t = level.tileAt(x, y);
-        return t == Tile::Wall || t == Tile::SecretWall;
+        return t == Tile::Wall || t == Tile::SecretWall || t == Tile::TinyGap;
     };
     auto waterLike = [&](int x, int y) {
         const Tile t = level.tileAt(x, y);
@@ -254,6 +299,9 @@ void TileSet::prepare(const Level& level) {
             case Tile::Bridge: a = (waterLike(x - 1, y) && waterLike(x + 1, y)) ? kBridgeV : kBridgeH; break;
             case Tile::Hazard: a = kThorns; break;
             case Tile::Exit: a = kExit0; break;
+            case Tile::Crate: a = kCrate; break;
+            case Tile::Boulder: a = kBoulder; break;
+            case Tile::TinyGap: a = kTinyGap; break;
             }
             art_[static_cast<size_t>(y * width_ + x)] = a;
         }

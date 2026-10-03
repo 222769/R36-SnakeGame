@@ -40,6 +40,8 @@ public:
     PowerUpType activateStored();
     void activate(PowerUpType type);
     void consume(PowerUpType type); // e.g. shield absorbed a hit
+    // Keeps an active power-up running for at least `seconds` more.
+    void extend(PowerUpType type, float seconds);
 
     void update(float dt);
     void clear();

@@ -36,7 +36,8 @@ bool paletteColor(char c, SDL_Color& out) {
     case 'V': out = {150, 90, 200, 255}; return true;  // beetle shell
     case 'v': out = {100, 60, 150, 255}; return true;  // beetle shell shade
     case 'M': out = {250, 235, 210, 255}; return true; // mushroom stem
-    case 'A': out = {80, 220, 200, 255}; return true;  // active checkpoint flag
+    case 'A': out = {80, 220, 200, 255}; return true;  // active checkpoint flag / gem
+    case 'O': out = {255, 150, 40, 255}; return true;  // orange (giant icon)
     case '.': out = {0, 0, 0, 0}; return true;
     default: return false;
     }
@@ -296,6 +297,123 @@ const Art kCheckpoint = {
     "................",
 };
 
+// --- Items (12x12): star, gem and power-up icons ------------------------------
+// The star is drawn white and recoloured: gold (collectible), grey (empty
+// HUD slot) or tinted at runtime (rainbow star icon).
+
+const Art kStar = {
+    ".....KK.....",
+    "....KWWK....",
+    "....KWWK....",
+    "KKKKKWWKKKKK",
+    "KWWWWWWWWWWK",
+    ".KWWKWWKWWK.",
+    "..KWWWWWWK..",
+    "..KWWWWWWK..",
+    ".KWWWKKWWWK.",
+    ".KWWK..KWWK.",
+    "KWWK....KWWK",
+    "KKK......KKK",
+};
+const Art kGem = {
+    "............",
+    "............",
+    "..KKKKKKKK..",
+    ".KWWAAAAAAK.",
+    "KWAAAAAAAAcK",
+    "KKKKKKKKKKKK",
+    ".KAAAAAAAcK.",
+    "..KAAAAAAK..",
+    "...KAAAAK...",
+    "....KAAK....",
+    ".....KK.....",
+    "............",
+};
+const Art kIconSpeed = { // lightning bolt
+    "......KKKK..",
+    ".....KYYYK..",
+    "....KYYYK...",
+    "...KYYYK....",
+    "..KYYYYKKK..",
+    "..KYYYYYYK..",
+    "..KKKKYYK...",
+    "....KYYK....",
+    "...KYYK.....",
+    "...KYK......",
+    "..KYK.......",
+    "..KK........",
+};
+const Art kIconShield = { // bubble
+    "....KKKK....",
+    "..KKAAAAKK..",
+    ".KAWWAAAAAK.",
+    ".KAWAAAAAAK.",
+    "KAAAAAAAAAAK",
+    "KAAAAAAAAAAK",
+    "KAAAAAAAAAAK",
+    "KAAAAAAAAAAK",
+    ".KAAAAAAAAK.",
+    ".KAAAAAAAAK.",
+    "..KKAAAAKK..",
+    "....KKKK....",
+};
+const Art kIconMagnet = {
+    "KKKK....KKKK",
+    "KWWK....KWWK",
+    "KWWK....KWWK",
+    "KRRK....KRRK",
+    "KRRK....KRRK",
+    "KRRK....KRRK",
+    "KRRRK..KRRRK",
+    "KRRRRKKRRRRK",
+    ".KRRRRRRRRK.",
+    "..KKRRRRKK..",
+    "....KKKK....",
+    "............",
+};
+const Art kIconSuperDash = { // >>
+    "............",
+    "KK....KK....",
+    "KVK...KVK...",
+    "KVVK..KVVK..",
+    ".KVVK..KVVK.",
+    "..KVVK..KVVK",
+    "..KVVK..KVVK",
+    ".KVVK..KVVK.",
+    "KVVK..KVVK..",
+    "KVK...KVK...",
+    "KK....KK....",
+    "............",
+};
+const Art kIconDoubleCoins = { // coin with a 2
+    "...KKKKKK...",
+    "..KYYYYYYK..",
+    ".KYYKKKKYyK.",
+    "KYYYYYYKYYyK",
+    "KYYYYYYKYYyK",
+    "KYYYKKKKYYyK",
+    "KYYYKYYYYYyK",
+    "KYYYKYYYYYyK",
+    "KYYYKKKKYyyK",
+    ".KyYYYYYYyK.",
+    "..KyyyyyyK..",
+    "...KKKKKK...",
+};
+const Art kIconTiny = { // shrink arrow (Giant is this flipped, in orange)
+    "....KKKK....",
+    "....KGGK....",
+    "....KGGK....",
+    "....KGGK....",
+    "....KGGK....",
+    ".KKKKGGKKKK.",
+    ".KGGGGGGGGK.",
+    "..KGGGGGGK..",
+    "...KGGGGK...",
+    "....KGGK....",
+    ".....KK.....",
+    "............",
+};
+
 struct NamedArt {
     const char* name;
     const Art* art;
@@ -321,6 +439,14 @@ const NamedArt kAllArt[] = {
     {"beetle1", &kBeetle1, Sprites::kEnemyFrame},
     {"mushroom", &kMushroom, Sprites::kEnemyFrame},
     {"checkpoint", &kCheckpoint, Sprites::kEnemyFrame},
+    {"star", &kStar, Sprites::kItemSize},
+    {"gem", &kGem, Sprites::kItemSize},
+    {"icon_speed", &kIconSpeed, Sprites::kItemSize},
+    {"icon_shield", &kIconShield, Sprites::kItemSize},
+    {"icon_magnet", &kIconMagnet, Sprites::kItemSize},
+    {"icon_superdash", &kIconSuperDash, Sprites::kItemSize},
+    {"icon_double", &kIconDoubleCoins, Sprites::kItemSize},
+    {"icon_tiny", &kIconTiny, Sprites::kItemSize},
 };
 
 // `from`/`to` optionally swap one palette character (e.g. a grey variant).
@@ -467,7 +593,28 @@ bool Sprites::create(SDL_Renderer* renderer, const std::string& spriteDir) {
         checkpoint_ = toTexture(renderer, sheet.get());
     }
 
-    const bool ok = player_ && heartFull_ && heartEmpty_ && coin_ && enemies_ && checkpoint_;
+    items_ = loadOverride(renderer, spriteDir, "items", kItemSize * kItemFrames, kItemSize);
+    if (!items_) {
+        SurfacePtr sheet = makeSurface(kItemSize * kItemFrames, kItemSize);
+        if (!sheet) return false;
+        auto at = [](int frame) { return frame * kItemSize; };
+        blitArt(sheet.get(), kStar, at(kItemStar), 0, 'W', 'Y');
+        blitArt(sheet.get(), kStar, at(kItemStarEmpty), 0, 'W', 'g');
+        blitArt(sheet.get(), kGem, at(kItemGem), 0);
+        blitArt(sheet.get(), kIconSpeed, at(itemFrame(PowerUpType::SpeedShoes)), 0);
+        blitArt(sheet.get(), kIconShield, at(itemFrame(PowerUpType::ShieldBubble)), 0);
+        blitArt(sheet.get(), kIconMagnet, at(itemFrame(PowerUpType::Magnet)), 0);
+        blitArt(sheet.get(), kIconSuperDash, at(itemFrame(PowerUpType::SuperDash)), 0);
+        blitArt(sheet.get(), kIconDoubleCoins, at(itemFrame(PowerUpType::DoubleCoins)), 0);
+        blitArt(sheet.get(), kIconTiny, at(itemFrame(PowerUpType::TinyMode)), 0);
+        // Giant: the tiny arrow upside down, in orange.
+        const Art flipped(kIconTiny.rbegin(), kIconTiny.rend());
+        blitArt(sheet.get(), flipped, at(itemFrame(PowerUpType::GiantMode)), 0, 'G', 'O');
+        blitArt(sheet.get(), kStar, at(itemFrame(PowerUpType::RainbowStar)), 0); // white: tinted when drawn
+        items_ = toTexture(renderer, sheet.get());
+    }
+
+    const bool ok = player_ && heartFull_ && heartEmpty_ && coin_ && enemies_ && checkpoint_ && items_;
     if (!ok) SDL_Log("[sprites] Failed to create sprites: %s", SDL_GetError());
     return ok;
 }

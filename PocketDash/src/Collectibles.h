@@ -1,6 +1,8 @@
 #pragma once
 
+#include "EntityTypes.h"
 #include "Math.h"
+#include "PowerUp.h"
 
 #include <SDL.h>
 
@@ -10,7 +12,7 @@ namespace pd {
 
 class Effects;
 
-// Coins placed in a level. Phase 4 adds stars, gems and hearts here.
+// Coins placed in a level.
 class CoinField {
 public:
     // Pickup radius around a coin centre, generous so kids don't miss them.
@@ -21,6 +23,9 @@ public:
     // Collects every coin within reach of `playerCenter`. Spawns a sparkle
     // per coin and returns how many were collected this step.
     int collect(Vec2 playerCenter, Effects* effects);
+
+    // Magnet: coins within `radius` fly towards `target`, faster when close.
+    void attract(Vec2 target, float radius, float dt);
 
     void render(SDL_Renderer* r, SDL_Texture* sheet, Vec2 camera, float time) const;
 
@@ -34,6 +39,49 @@ private:
     };
     std::vector<Coin> coins_;
     int collected_ = 0;
+};
+
+// Stars (three hidden per level), gems (rare) and power-up bubbles.
+class ItemField {
+public:
+    enum class Kind { Star, Gem, PowerUp };
+    static constexpr float kPickupRadius = 18.0f;
+
+    struct Pickup {
+        Kind kind = Kind::Star;
+        PowerUpType power = PowerUpType::None;
+        int index = 0; // star number within the level (0..2)
+    };
+
+    void reset(const std::vector<Vec2>& stars, const std::vector<Vec2>& gems,
+               const std::vector<PowerUpSpawn>& powerUps);
+
+    // Collects items within reach. Power-ups are only taken when
+    // `canTakePowerUp` (the slot is empty); otherwise they wait on the ground.
+    // Writes up to `maxOut` pickups to `out` and returns how many.
+    int collect(Vec2 playerCenter, bool canTakePowerUp, Effects* effects, Pickup* out, int maxOut);
+
+    void render(SDL_Renderer* r, SDL_Texture* items, Vec2 camera, float time) const;
+
+    int starsTotal() const { return starsTotal_; }
+    int starsCollected() const { return starsCollected_; }
+    bool starCollected(int index) const;
+    int gemsTotal() const { return gemsTotal_; }
+    int gemsCollected() const { return gemsCollected_; }
+
+private:
+    struct Item {
+        Kind kind;
+        PowerUpType power;
+        Vec2 pos;
+        int index;
+        bool taken;
+    };
+    std::vector<Item> items_;
+    int starsTotal_ = 0;
+    int starsCollected_ = 0;
+    int gemsTotal_ = 0;
+    int gemsCollected_ = 0;
 };
 
 // Heart pickups: restore one heart. They stay put while the player is at

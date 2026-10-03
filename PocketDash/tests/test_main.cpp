@@ -506,28 +506,68 @@ void testBuiltinLevel() {
     Player p(level.spawn);
     CHECK(!level.overlapsSolid(p.hitbox())); // spawn is not inside a wall
 
-    // Every coin and the exit must be reachable from the spawn (tile flood fill).
-    const int sx = static_cast<int>(level.spawn.x) / 32;
-    const int sy = static_cast<int>(level.spawn.y) / 32;
-    std::set<std::pair<int, int>> seen{{sx, sy}};
-    std::vector<std::pair<int, int>> stack{{sx, sy}};
-    while (!stack.empty()) {
-        const auto [x, y] = stack.back();
-        stack.pop_back();
-        const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-        for (const auto& d : dirs) {
-            const int nx = x + d[0];
-            const int ny = y + d[1];
-            if (level.inBounds(nx, ny) && !Level::isSolid(level.tileAt(nx, ny)) &&
-                !Level::isDanger(level.tileAt(nx, ny)) && seen.insert({nx, ny}).second)
-                stack.push_back({nx, ny});
+    // Tile flood fill from the spawn. With `abilities`, crates, boulders and
+    // tiny gaps count as passable (the level's power-ups can open them).
+    auto reachable = [&](bool abilities) {
+        const int sx = static_cast<int>(level.spawn.x) / 32;
+        const int sy = static_cast<int>(level.spawn.y) / 32;
+        std::set<std::pair<int, int>> seen{{sx, sy}};
+        std::vector<std::pair<int, int>> stack{{sx, sy}};
+        while (!stack.empty()) {
+            const auto [x, y] = stack.back();
+            stack.pop_back();
+            const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            for (const auto& d : dirs) {
+                const int nx = x + d[0];
+                const int ny = y + d[1];
+                if (!level.inBounds(nx, ny)) continue;
+                const Tile t = level.tileAt(nx, ny);
+                const bool open = !Level::isSolid(t, abilities ? kPassTinyGaps : kPassNone) ||
+                                  (abilities && Level::isBreakable(t, true));
+                if (open && !Level::isDanger(t) && seen.insert({nx, ny}).second) stack.push_back({nx, ny});
+            }
         }
-    }
+        return seen;
+    };
+    auto tileOf = [](Vec2 p) { return std::make_pair(static_cast<int>(p.x) / 32, static_cast<int>(p.y) / 32); };
+
+    // Coins and the exit need no special abilities.
+    const auto plain = reachable(false);
     int unreachable = 0;
     for (const Vec2& c : level.coins)
-        if (!seen.count({static_cast<int>(c.x) / 32, static_cast<int>(c.y) / 32})) ++unreachable;
+        if (!plain.count(tileOf(c))) ++unreachable;
     CHECK(unreachable == 0);
-    CHECK(seen.count({static_cast<int>(level.exit.x) / 32, static_cast<int>(level.exit.y) / 32}) == 1);
+    CHECK(plain.count(tileOf(level.exit)) == 1);
+
+    // Everything else is reachable once crates, boulders and tiny gaps open...
+    const auto full = reachable(true);
+    std::vector<Vec2> extras = level.stars;
+    extras.insert(extras.end(), level.gems.begin(), level.gems.end());
+    extras.insert(extras.end(), level.hearts.begin(), level.hearts.end());
+    for (const PowerUpSpawn& pu : level.powerUps) extras.push_back(pu.pos);
+    for (const CheckpointSpawn& cp : level.checkpoints) extras.push_back(cp.pos);
+    unreachable = 0;
+    for (const Vec2& e : extras)
+        if (!full.count(tileOf(e))) ++unreachable;
+    CHECK(unreachable == 0);
+    CHECK(level.stars.size() == 3);
+
+    // ...and the abilities needed to open them must be in the level, reachable
+    // without themselves needing those abilities.
+    bool hasBoulder = false;
+    bool hasTinyGap = false;
+    for (int y = 0; y < level.height(); ++y)
+        for (int x = 0; x < level.width(); ++x) {
+            hasBoulder |= level.tileAt(x, y) == Tile::Boulder;
+            hasTinyGap |= level.tileAt(x, y) == Tile::TinyGap;
+        }
+    auto hasReachablePower = [&](PowerUpType t) {
+        for (const PowerUpSpawn& pu : level.powerUps)
+            if (pu.type == t && plain.count(tileOf(pu.pos))) return true;
+        return false;
+    };
+    if (hasBoulder) CHECK(hasReachablePower(PowerUpType::GiantMode));
+    if (hasTinyGap) CHECK(hasReachablePower(PowerUpType::TinyMode));
 }
 
 void testCoins() {
@@ -830,6 +870,276 @@ void testDebugWarp() {
     CHECK(s.state() == LevelSession::State::Playing);
 }
 
+// --- Phase 4: stars, gems, power-ups, smashing --------------------------------
+
+// One step with explicit buttons.
+unsigned stepWith(LevelSession& s, Vec2 move, bool hop = false, bool dash = false, bool use = false) {
+    PlayerInput in;
+    in.move = move;
+    in.hopPressed = hop;
+    in.dashPressed = dash;
+    in.usePressed = use;
+    return s.update(in, kDt);
+}
+
+void testStarsGemsAndGoldenStar() {
+    const Level all = parseOrDie({
+        "##########",
+        "#P*c*g*.E#",
+        "##########",
+    });
+    LevelSession s(all, Difficulty::Normal);
+    const unsigned ev = run(s, {1.0f, 0.0f}, 120);
+    CHECK(ev & kSessionStar);
+    CHECK(ev & kSessionGem);
+    CHECK(s.items().starsCollected() == 3 && s.items().starsTotal() == 3);
+    CHECK(s.items().starCollected(0) && s.items().starCollected(2));
+    CHECK(s.items().gemsCollected() == 1);
+    CHECK(s.state() == LevelSession::State::Cleared);
+    CHECK(ev & kSessionGoldenStar);
+    CHECK(s.goldenStar());
+
+    // Missing one star (in the row below) means no Golden Star.
+    const Level missed = parseOrDie({
+        "#########",
+        "#P*c*.E.#",
+        "#.....*.#",
+        "#########",
+    });
+    LevelSession m(missed, Difficulty::Normal);
+    const unsigned mev = run(m, {1.0f, 0.0f}, 120);
+    CHECK(m.state() == LevelSession::State::Cleared);
+    CHECK((mev & kSessionGoldenStar) == 0);
+    CHECK(!m.goldenStar());
+    CHECK(m.items().starsCollected() == 2);
+}
+
+void testPowerUpSlot() {
+    const Level level = parseOrDie({
+        "##########",
+        "#P12....E#",
+        "##########",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    // Walk over both bubbles and out of reach of the second (x > 112 + 18).
+    const unsigned ev = run(s, {1.0f, 0.0f}, 40);
+    CHECK(ev & kSessionPowerUpGet);
+    CHECK(s.powers().stored() == PowerUpType::SpeedShoes); // the shield waits on the ground
+    CHECK(s.player().position().x > 132.0f);
+    run(s, {}, 10);
+
+    const unsigned use = stepWith(s, {}, false, false, true);
+    CHECK(use & kSessionPowerUpUse);
+    CHECK(s.powers().active(PowerUpType::SpeedShoes));
+    CHECK(s.powers().stored() == PowerUpType::None);
+    CHECK(s.player().modifiers().speedScale > 1.0f);
+
+    // Slot is free again: walking back picks up the shield.
+    run(s, {-1.0f, 0.0f}, 20);
+    CHECK(s.powers().stored() == PowerUpType::ShieldBubble);
+
+    // Timed power-ups run out (with an event).
+    const unsigned end = run(s, {}, 60 * 9);
+    CHECK(end & kSessionPowerUpEnd);
+    CHECK(!s.powers().active(PowerUpType::SpeedShoes));
+    CHECK(s.player().modifiers().speedScale == 1.0f);
+}
+
+void testSpeedAndSuperDashModifiers() {
+    Player normal({0.0f, 0.0f});
+    Player fast({0.0f, 0.0f});
+    PlayerModifiers speed;
+    speed.speedScale = 1.5f;
+    fast.setModifiers(speed);
+    PlayerInput right;
+    right.move = {1.0f, 0.0f};
+    simulate(normal, right, 60);
+    simulate(fast, right, 60);
+    CHECK(fast.position().x > normal.position().x * 1.4f);
+
+    Player dash1({0.0f, 0.0f});
+    Player dash2({0.0f, 0.0f});
+    PlayerModifiers super;
+    super.dashTimeScale = 2.0f;
+    dash2.setModifiers(super);
+    PlayerInput d;
+    d.dashPressed = true;
+    simulate(dash1, d, 1);
+    simulate(dash2, d, 1);
+    simulate(dash1, PlayerInput{}, 30);
+    simulate(dash2, PlayerInput{}, 30);
+    CHECK(dash2.position().y > dash1.position().y * 1.7f); // idle dash goes down
+
+    // Size scales the hitbox around the feet.
+    Player giant({100.0f, 100.0f});
+    PlayerModifiers big;
+    big.size = 1.45f;
+    const RectF a = giant.hitbox();
+    const RectF b = giant.hitboxWith(big);
+    CHECK(b.w > a.w * 1.4f);
+    CHECK_NEAR(b.center().x, a.center().x, 0.01f);
+}
+
+void testShieldBlocksOneHit() {
+    const Level level = parseOrDie({
+        "##########",
+        "#P2..^..E#",
+        "##########",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    walkRightTo(s, 80.0f);
+    CHECK(s.powers().stored() == PowerUpType::ShieldBubble);
+    stepWith(s, {}, false, false, true);
+    CHECK(s.powers().active(PowerUpType::ShieldBubble));
+    const unsigned ev = run(s, {1.0f, 0.0f}, 40); // into the thorns
+    CHECK(ev & kSessionShieldPop);
+    CHECK((ev & kSessionHurt) == 0);
+    CHECK(s.hearts() == 3);
+    CHECK(!s.powers().active(PowerUpType::ShieldBubble));
+}
+
+void testMagnetAndDoubleCoins() {
+    const Level level = parseOrDie({
+        "############",
+        "#P3........#",
+        "#..........#",
+        "#.......c..#",
+        "#.........E#",
+        "############",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    walkRightTo(s, 80.0f);
+    stepWith(s, {}, false, false, true);
+    CHECK(s.powers().active(PowerUpType::Magnet));
+    walkRightTo(s, 160.0f); // still ~100px from the coin
+    run(s, {}, 60);
+    CHECK(s.coins().collected() == 1);
+    CHECK(s.player().position().x < 200.0f);
+
+    const Level dbl = parseOrDie({
+        "###########",
+        "#P5.ccc..E#",
+        "###########",
+    });
+    LevelSession d(dbl, Difficulty::Normal);
+    walkRightTo(d, 80.0f);
+    stepWith(d, {}, false, false, true);
+    CHECK(d.powers().active(PowerUpType::DoubleCoins));
+    walkRightTo(d, 220.0f);
+    CHECK(d.coins().collected() == 3);
+    CHECK(d.stats().coinPoints == 6);
+}
+
+void testTinyModeGaps() {
+    const Level level = parseOrDie({
+        "##########",
+        "#P67:...E#",
+        "##########",
+    });
+    // Normal size can't fit through the gap (tile x 128..160).
+    LevelSession blocked(level, Difficulty::Normal);
+    run(blocked, {1.0f, 0.0f}, 120);
+    CHECK(blocked.player().position().x < 128.0f);
+
+    // Tiny Mode slips in. Carry the Giant bubble along in the slot.
+    LevelSession s(level, Difficulty::Normal);
+    walkRightTo(s, 80.0f);
+    stepWith(s, {}, false, false, true);
+    CHECK(s.powers().active(PowerUpType::TinyMode));
+    CHECK(s.player().modifiers().size < 1.0f);
+    walkRightTo(s, 140.0f); // picks up the giant bubble on the way
+    run(s, {}, 10);
+    CHECK(s.powers().stored() == PowerUpType::GiantMode);
+    CHECK(s.player().position().x > 132.0f && s.player().position().x < 156.0f);
+
+    // Giant can't grow inside the gap: no room, it stays in the slot.
+    const unsigned denied = stepWith(s, {}, false, false, true);
+    CHECK(denied & kSessionNoRoom);
+    CHECK(s.powers().stored() == PowerUpType::GiantMode);
+    CHECK(!s.powers().active(PowerUpType::GiantMode));
+
+    // Tiny Mode never runs out while the hero is still inside the gap...
+    run(s, {}, 60 * 11);
+    CHECK(s.powers().active(PowerUpType::TinyMode));
+    CHECK(!s.level().overlapsSolid(s.player().hitbox(), kPassTinyGaps));
+
+    // ...but ends once they walk out, leaving them at normal size and free.
+    walkRightTo(s, 210.0f);
+    run(s, {}, 30);
+    CHECK(!s.powers().active(PowerUpType::TinyMode));
+    CHECK(!s.level().overlapsSolid(s.player().hitbox()));
+
+    // With room to spare, the stored Giant now works.
+    const unsigned grow = stepWith(s, {}, false, false, true);
+    CHECK(grow & kSessionPowerUpUse);
+    CHECK(s.powers().active(PowerUpType::GiantMode));
+    CHECK(!s.level().overlapsSolid(s.player().hitbox()));
+}
+
+void testGiantSmashesAndCrushes() {
+    const Level level = parseOrDie({
+        "###########",
+        "#P7..X.m.E#",
+        "###########",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    walkRightTo(s, 80.0f);
+    const unsigned use = stepWith(s, {}, false, false, true);
+    CHECK(use & kSessionPowerUpUse);
+    CHECK(s.powers().active(PowerUpType::GiantMode));
+    const unsigned ev = run(s, {1.0f, 0.0f}, 150);
+    CHECK(ev & kSessionBlockBroken);
+    CHECK(s.level().tileAt(5, 1) == Tile::Ground);
+    CHECK(s.enemiesAlive() == 0);
+    CHECK(s.hearts() == 3);
+    CHECK(s.state() == LevelSession::State::Cleared);
+
+    // Restart puts the boulder back.
+    s.restart();
+    CHECK(s.level().tileAt(5, 1) == Tile::Boulder);
+}
+
+void testDashSmashesCrates() {
+    const Level level = parseOrDie({
+        "#########",
+        "#P..x..E#",
+        "#########",
+    });
+    // Walking just bumps into the crate.
+    LevelSession walk(level, Difficulty::Normal);
+    run(walk, {1.0f, 0.0f}, 90);
+    CHECK(walk.level().tileAt(4, 1) == Tile::Crate);
+    CHECK(walk.player().position().x < 128.0f);
+
+    // A dash smashes it.
+    LevelSession s(level, Difficulty::Normal);
+    walkRightTo(s, 90.0f);
+    const unsigned ev = run(s, {1.0f, 0.0f}, 10, -1, 0);
+    CHECK(ev & kSessionBlockBroken);
+    CHECK(s.level().tileAt(4, 1) == Tile::Ground);
+    CHECK(s.stats().blocksBroken == 1);
+    run(s, {1.0f, 0.0f}, 90);
+    CHECK(s.state() == LevelSession::State::Cleared);
+}
+
+void testRainbowStar() {
+    const Level level = parseOrDie({
+        "###########",
+        "#P8.^.m..E#",
+        "###########",
+    });
+    LevelSession s(level, Difficulty::Normal);
+    walkRightTo(s, 80.0f);
+    stepWith(s, {}, false, false, true);
+    CHECK(s.powers().active(PowerUpType::RainbowStar));
+    CHECK(s.player().modifiers().rainbow);
+    const unsigned ev = run(s, {1.0f, 0.0f}, 150);
+    CHECK((ev & kSessionHurt) == 0);
+    CHECK(s.hearts() == 3);
+    CHECK(s.enemiesAlive() == 0);
+    CHECK(s.state() == LevelSession::State::Cleared);
+}
+
 } // namespace
 
 int main(int, char*[]) {
@@ -868,6 +1178,15 @@ int main(int, char*[]) {
         {"enemies avoid danger", testEnemiesAvoidDanger},
         {"mushroom shockwave", testMushroomShockwave},
         {"debug warp", testDebugWarp},
+        {"stars, gems, golden star", testStarsGemsAndGoldenStar},
+        {"power-up slot", testPowerUpSlot},
+        {"speed / super dash / size", testSpeedAndSuperDashModifiers},
+        {"shield", testShieldBlocksOneHit},
+        {"magnet and double coins", testMagnetAndDoubleCoins},
+        {"tiny mode gaps", testTinyModeGaps},
+        {"giant smashes and crushes", testGiantSmashesAndCrushes},
+        {"dash smashes crates", testDashSmashesCrates},
+        {"rainbow star", testRainbowStar},
     };
     for (const auto& [name, fn] : tests) {
         const int before = g_failures;
