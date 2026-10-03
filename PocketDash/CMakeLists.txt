@@ -73,6 +73,7 @@ set(POCKETDASH_CORE_SOURCES
     src/Score.cpp
     src/SettingsScene.cpp
     src/Sprites.cpp
+    src/Synth.cpp
     src/TileSet.cpp
     src/TitleScene.cpp
     src/UI.cpp
@@ -81,7 +82,8 @@ set(POCKETDASH_CORE_SOURCES
 
 add_library(pocketdash_core STATIC ${POCKETDASH_CORE_SOURCES})
 target_include_directories(pocketdash_core PUBLIC src)
-target_link_libraries(pocketdash_core PUBLIC pd_sdl)
+find_package(Threads REQUIRED)
+target_link_libraries(pocketdash_core PUBLIC pd_sdl Threads::Threads)
 target_compile_definitions(pocketdash_core PUBLIC
     POCKETDASH_VERSION="${PROJECT_VERSION}")
 

@@ -11,11 +11,13 @@
 #include "LevelSession.h"
 #include "Level.h"
 #include "Player.h"
+#include "AudioManager.h"
 #include "PowerUp.h"
 #include "Progress.h"
 #include "SaveManager.h"
 #include "Score.h"
 #include "Sprites.h"
+#include "Synth.h"
 #include "UI.h"
 #include "World.h"
 
@@ -591,8 +593,13 @@ void testCoins() {
 void testEffectsPool() {
     Effects fx;
     for (int i = 0; i < 200; ++i) fx.spawn(Effects::Type::Dust, {0.0f, 0.0f}, SDL_Color{255, 255, 255, 255});
-    CHECK(fx.activeCount() == 48); // fixed pool, recycles the oldest
-    for (int i = 0; i < 60; ++i) fx.update(kDt);
+    CHECK(fx.activeCount() == 96); // fixed pool, recycles the oldest
+    // Every effect type finishes within its lifetime.
+    for (int i = 0; i < 6; ++i) fx.spawn(static_cast<Effects::Type>(i), {0.0f, 0.0f}, SDL_Color{255, 255, 255, 255});
+    float longest = 0.0f;
+    for (int i = 0; i < 6; ++i) longest = std::max(longest, Effects::lifetime(static_cast<Effects::Type>(i)));
+    CHECK(longest < 1.5f);
+    for (int i = 0; i < static_cast<int>(longest / kDt) + 2; ++i) fx.update(kDt);
     CHECK(fx.activeCount() == 0);
 }
 
@@ -1827,10 +1834,67 @@ void testBossKnockOutSendsItToSleep() {
     CHECK(s.level().tileAt(7, 8) == Tile::Ground);    // gate open again
 }
 
+// --- Phase 8: built-in sound ----------------------------------------------------------
+
+int peakOf(const synth::Buffer& b) {
+    int peak = 0;
+    for (int16_t v : b.samples) peak = std::max(peak, std::abs(static_cast<int>(v)));
+    return peak;
+}
+
+void testSynthSfx() {
+    for (int i = 0; i < static_cast<int>(Sfx::Count); ++i) {
+        const synth::Buffer b = synth::makeSfx(static_cast<Sfx>(i));
+        CHECK(b.frames() > 0);
+        CHECK(b.seconds() < 2.0f);       // short and snappy
+        CHECK(peakOf(b) > 8000);         // clearly audible
+        CHECK(peakOf(b) <= 32000);       // never clips
+        // Ends in silence (no click when the sound stops).
+        const int tail = std::abs(static_cast<int>(b.samples[b.samples.size() - 2]));
+        if (tail >= 2000) std::printf("  sfx %s ends at %d\n", AudioManager::sfxName(static_cast<Sfx>(i)), tail);
+        CHECK(tail < 2000);
+    }
+    // Deterministic: the same sound every run.
+    CHECK(synth::makeSfx(Sfx::Coin).samples == synth::makeSfx(Sfx::Coin).samples);
+}
+
+void testSynthMusic() {
+    for (MusicTrack t : {MusicTrack::Title, MusicTrack::Meadow, MusicTrack::Boss}) {
+        const synth::Buffer b = synth::makeMusic(t);
+        const float expected = synth::musicLoopSeconds(t);
+        CHECK(std::fabs(b.seconds() - expected) < 0.001f);
+        CHECK(expected > 10.0f && expected < 30.0f);
+        CHECK(peakOf(b) > 12000 && peakOf(b) <= 32000);
+        // Seamless loop: the last frame flows into the first.
+        const int jumpL = std::abs(b.samples[0] - b.samples[b.samples.size() - 2]);
+        const int jumpR = std::abs(b.samples[1] - b.samples[b.samples.size() - 1]);
+        CHECK(jumpL < 3000 && jumpR < 3000);
+    }
+    CHECK(synth::musicLoopSeconds(MusicTrack::Boss) < synth::musicLoopSeconds(MusicTrack::Title)); // boss is faster
+}
+
+void testWavContainer() {
+    synth::Buffer b;
+    b.samples = {0, 1, -1, 32000, -32000, 7};
+    const std::vector<uint8_t> wav = synth::toWav(b);
+    CHECK(wav.size() == 44 + 12);
+    CHECK(std::string(wav.begin(), wav.begin() + 4) == "RIFF");
+    CHECK(std::string(wav.begin() + 8, wav.begin() + 16) == "WAVEfmt ");
+    CHECK(std::string(wav.begin() + 36, wav.begin() + 40) == "data");
+    CHECK(wav[40] == 12 && wav[41] == 0);
+    CHECK(wav[22] == 2 && wav[34] == 16); // stereo, 16-bit
+    // Samples are little-endian: -1 -> FF FF, 32000 -> 00 7D.
+    CHECK(wav[48] == 0xFF && wav[49] == 0xFF);
+    CHECK(wav[50] == 0x00 && wav[51] == 0x7D);
+}
+
 int main(int, char*[]) {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"key/value parsing", testKeyValueParsing},
         {"menu auto-repeat", testMenuAutoRepeat},
+        {"synth sound effects", testSynthSfx},
+        {"synth music", testSynthMusic},
+        {"wav container", testWavContainer},
         {"boss map parsing", testBossMapParsing},
         {"boss state machine", testBossStateMachine},
         {"boss arena gates and rings", testBossArenaGatesAndRings},

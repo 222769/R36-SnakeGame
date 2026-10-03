@@ -1,7 +1,16 @@
 # Audio
 
-Drop sound files here. Every file is optional: if one is missing, that sound
-is silent and the game carries on.
+Every file is optional. The game synthesises any sound or music track that
+has no file here (see `src/Synth.cpp`): soft bells, warm tones and filtered
+noise for the effects, and three looping tracks composed at startup on a
+background thread. To hear the built-in versions, or to use them as a
+starting point, export them as WAV files:
+
+```bash
+./pocketdash --export-audio exported-audio
+```
+
+To replace a sound, drop a file with the matching name in this folder.
 
 Sound effects (`.wav` or `.ogg`):
 
@@ -27,7 +36,10 @@ Sound effects (`.wav` or `.ogg`):
 | powerup_use        | a power-up is activated (X)    |
 | denied             | not allowed: no room for Giant, locked gate, flag not open yet |
 
-Music (`.ogg`, `.mp3` or `.wav`, looped): `title`, `meadow`, `boss`.
+Music (`.ogg`, `.mp3` or `.wav`, looped): `title` (title and menus),
+`meadow` (levels) and `boss` (the Meadow Guardian fight). Built-in tracks
+crossfade into each other; file music fades out before the next one fades in.
+The music dips under the level-complete fanfare.
 
 Example: `assets/audio/coin.wav`, `assets/audio/meadow.ogg`.
 

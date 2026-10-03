@@ -13,6 +13,7 @@ namespace {
 constexpr SDL_Color kDustColor{245, 240, 225, 200};
 constexpr SDL_Color kGold{255, 214, 64, 255};
 constexpr SDL_Color kWhite{255, 255, 255, 255};
+constexpr SDL_Color kLeaf{110, 170, 70, 255};
 constexpr SDL_Color kWater{170, 220, 255, 255};
 constexpr SDL_Color kMint{120, 230, 200, 255};
 
@@ -193,7 +194,7 @@ void LevelSession::updateEnemies(float dt, unsigned& events) {
             e.defeat();
             ++stats_.enemiesDefeated;
             events |= kSessionStomp;
-            effects_.spawn(Effects::Type::Sparkle, e.position() - Vec2{0.0f, 10.0f}, kWhite);
+            effects_.spawn(Effects::Type::HitStars, e.position() - Vec2{0.0f, 14.0f}, kGold);
             effects_.spawn(Effects::Type::Dust, e.position(), kDustColor);
             if (stomp) player_.bounce();
         } else if (e.dangerous() && player_.height() < kClearHeight) {
@@ -261,8 +262,9 @@ void LevelSession::updateBoss(float dt, unsigned& events) {
     if (boss_.vulnerable() && (stomp || player_.isDashing() || crushesEnemies())) {
         boss_.hit(feet);
         events |= kSessionBossHit;
-        effects_.spawn(Effects::Type::Sparkle, boss_.position() - Vec2{0.0f, 40.0f}, kWhite);
-        effects_.spawn(Effects::Type::Sparkle, boss_.position() - Vec2{12.0f, 30.0f}, kGold);
+        effects_.spawn(Effects::Type::HitStars, boss_.position() - Vec2{0.0f, 70.0f}, kGold);
+        effects_.spawn(Effects::Type::Leaves, boss_.position() - Vec2{0.0f, 60.0f}, kLeaf);
+        effects_.spawn(Effects::Type::Sparkle, boss_.position() - Vec2{12.0f, 40.0f}, kWhite);
         if (stomp) player_.bounce();
     } else if (stomp) {
         player_.bounce(); // boing: its mossy head is springy, but only hurts it when dizzy
@@ -492,7 +494,7 @@ void LevelSession::smashBlocks(unsigned& events) {
             events |= kSessionBlockBroken;
             const Vec2 c = Level::tileCenter(tx, ty);
             effects_.spawn(Effects::Type::Dust, c + Vec2{0.0f, 8.0f}, kDustColor);
-            effects_.spawn(Effects::Type::Sparkle, c, kChips);
+            effects_.spawn(Effects::Type::Chips, c + Vec2{0.0f, 8.0f}, kChips);
         }
     }
 }
@@ -624,6 +626,7 @@ void LevelSession::updateLocksAndSecrets(unsigned& events) {
         ++secretsFound_;
         events |= kSessionSecret;
         effects_.spawn(Effects::Type::Sparkle, bodyCenter(player_), kMint);
+        effects_.spawn(Effects::Type::Leaves, feet, kLeaf);
     }
 }
 

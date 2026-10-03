@@ -25,6 +25,7 @@ public:
     void render(SDL_Renderer* r) override;
     void fillDebugInfo(DebugInfo& info) const override;
     void renderDebug(SDL_Renderer* r) const override;
+    bool focusPoint(Vec2& screen) const override;
 
 private:
     enum class Overlay { None, Paused, Info, Sign };
@@ -91,6 +92,7 @@ private:
     float bossCard_ = 0.0f;   // boss intro card time left (the hero waits)
     bool bossIntroSeen_ = false;
     float celebrate_ = 0.0f;  // boss defeat celebration time left
+    float hitStop_ = 0.0f;    // brief freeze that gives hits weight
 };
 
 } // namespace pd

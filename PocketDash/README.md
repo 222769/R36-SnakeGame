@@ -6,18 +6,21 @@ native ARM Linux executable, and it also runs on a normal PC for development.
 
 > **Pick up and play in seconds.**
 
-**Status:** Phases 1–7 of 8 are complete. World 1 has 8 levels loaded from
+**Status:** All 8 phases are complete. World 1 has 8 levels loaded from
 data files, with objectives (coins, stars, rescues, timed runs), signs,
 rafts, keys and secrets. It also has enemies, hearts, checkpoints, the three
 difficulties, eight power-ups and breakable blocks. The game has a main
 menu, a level-select map, scores with high-score tables, settings
 (including a controller test and button remapping), saves, and a collection
 of outfits unlocked with gems. Level 1-8 ends World 1 with a boss fight
-against the Meadow Guardian. See [TODO.md](TODO.md) for the roadmap.
+against the Meadow Guardian. Sound effects and music are synthesised at
+startup, so the game needs no audio files. Scenes change with an iris wipe.
+See [TODO.md](TODO.md) for the roadmap.
 
 ![Title screen](docs/title.png)
 ![Main menu](docs/main_menu.png)
 ![Level select](docs/level_select.png)
+![Level title card](docs/title_card.png)
 ![Gameplay](docs/gameplay.png)
 ![Enemies](docs/enemies.png)
 ![Power-ups](docs/powerups.png)
@@ -367,8 +370,9 @@ PocketDash/
 │   ├── TileSet.*           per-world procedural tile atlas + visible-tile renderer
 │   ├── Camera.*            dead-zone follow camera with look-ahead and shake
 │   ├── Collectibles.*      coins (with magnet), stars, gems, power-up bubbles, hearts
-│   ├── Effects.*           fixed-size pool of sparkles and dust
-│   ├── AudioManager.*      SDL2_mixer wrapper, silent when audio/files are missing
+│   ├── Effects.*           fixed-size particle pool: sparkles, dust, splashes, hit stars, leaves, chips
+│   ├── AudioManager.*      SDL2_mixer wrapper: files or synthesised sound, crossfading music
+│   ├── Synth.*             sound-effect and music synthesiser (no SDL), WAV writer
 │   ├── SaveManager.*       INI-style key=value store; settings, progress and button files
 │   ├── Canvas.*            software painter: anti-aliased shapes, shading, tileable noise
 │   ├── Sprites.*           procedurally painted sprites (PNG overrides)
@@ -417,6 +421,17 @@ PocketDash/
 * **RAII everywhere.** SDL handles live in `std::unique_ptr` with custom
   deleters (`SdlPtr.h`). SDL itself is initialised and shut down by a member
   object.
+* **Audio is optional too.** `Synth.cpp` builds every sound effect from
+  envelopes, glides and soft waveforms. It also composes the three music
+  loops (chord progression, bass, arpeggio, a seeded melody with a call and
+  response, and light percussion). Music is composed on a worker thread at
+  startup and crossfades on two reserved mixer channels.
+  `--export-audio DIR` writes it all out as WAV files.
+* **Game feel.** Every hit has a short hit-stop: 0.12 s when you are hurt,
+  0.05–0.1 s for stomps and boss hits. Scenes change with an iris wipe
+  centred on the hero. Particles (sparkles, dust, splashes, hit stars,
+  leaves, chips) are bursts whose motion depends only on their age, in a
+  fixed pool of 96.
 * **Art is optional.** Sprites are painted in `Sprites.cpp`. To replace a
   sheet, drop a PNG such as `assets/sprites/player.png` (2 frames ×
   3 facings of 32×40: front, back, side) into the folder. Layouts are listed

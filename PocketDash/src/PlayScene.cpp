@@ -74,6 +74,7 @@ void PlayScene::restart() {
     signIndex_ = -1;
     bossCard_ = 0.0f;
     celebrate_ = 0.0f;
+    hitStop_ = 0.0f;
 }
 
 void PlayScene::showToast(const char* text) {
@@ -248,6 +249,10 @@ void PlayScene::update(float dt) {
         }
     }
 
+    if (hitStop_ > 0.0f) {
+        hitStop_ -= dt; // everything holds still for a moment
+        return;
+    }
     PlayerInput pin;
     if (bossCard_ > 0.0f) {
         bossCard_ -= dt; // the hero waits while the boss is introduced
@@ -292,6 +297,7 @@ void PlayScene::handleEvents(unsigned events) {
     if (events & kSessionHeart) audio.play(Sfx::Heart);
     if (events & kSessionCheckpoint) audio.play(Sfx::Checkpoint);
     if (events & kSessionStomp) {
+        hitStop_ = std::max(hitStop_, 0.05f);
         audio.play(Sfx::EnemyHit);
         camera_.shake(2.0f, 0.12f);
     }
@@ -300,12 +306,14 @@ void PlayScene::handleEvents(unsigned events) {
         camera_.snapTo(session_->player().position()); // rescued: jump the view back with them
     }
     if (events & kSessionHurt) {
+        hitStop_ = std::max(hitStop_, 0.12f);
         audio.play(Sfx::PlayerHurt);
         camera_.shake(6.0f, 0.3f);
         hudHurt_ = 0.5f;
     }
     if (events & kSessionCleared) {
         audio.play(Sfx::LevelComplete);
+        audio.duckMusic(1800); // let the fanfare through
         finishLevel();
     }
     if (events & kSessionStar) audio.play(Sfx::Star);
@@ -362,12 +370,14 @@ void PlayScene::handleEvents(unsigned events) {
         tiles_.prepare(session_->level()); // the gates closed
         camera_.shake(4.0f, 0.5f);
         audio.play(Sfx::Denied);
+        audio.playMusic(MusicTrack::Boss);
         if (!bossIntroSeen_) {
             bossIntroSeen_ = true;
             bossCard_ = Boss::kIntroTime;
         }
     }
     if (events & kSessionBossHit) {
+        hitStop_ = std::max(hitStop_, 0.1f);
         audio.play(Sfx::EnemyHit);
         camera_.shake(5.0f, 0.25f);
     }
@@ -376,8 +386,12 @@ void PlayScene::handleEvents(unsigned events) {
         audio.play(Sfx::Star);
         camera_.shake(3.0f, 0.4f);
         celebrate_ = kCelebrateTime;
+        audio.playMusic(MusicTrack::Meadow);
     }
-    if (events & kSessionRespawned) tiles_.prepare(session_->level()); // gates may have reopened
+    if (events & kSessionRespawned) {
+        tiles_.prepare(session_->level()); // gates may have reopened
+        if (session_->hasBoss() && session_->boss().sleeping()) audio.playMusic(MusicTrack::Meadow);
+    }
     if (events & kSessionBlockBroken) {
         audio.play(Sfx::Break);
         camera_.shake(3.0f, 0.12f);
@@ -786,29 +800,47 @@ void PlayScene::renderPowerHud(SDL_Renderer* r) const {
 }
 
 void PlayScene::renderBanner(SDL_Renderer* r) const {
-    // Shown on whichever half of the screen the hero is not in, so it never
-    // hides them. Slides in from that edge, holds, then slides back out.
+    // Level title card. Shown on whichever half of the screen the hero is
+    // not in, so it never hides them. Slides in (with a little overshoot),
+    // holds, then slides back out.
     const float heroScreenY = session_->player().position().y - camera_.position().y;
     const bool atBottom = heroScreenY < kScreenHeight * 0.5f;
-    constexpr int kH = 62;
-    const float rest = atBottom ? static_cast<float>(kScreenHeight - kH - 20) : 64.0f;
-    const float hidden = atBottom ? static_cast<float>(kScreenHeight + 4) : -static_cast<float>(kH + 4);
+    constexpr int kH = 80;
+    const float rest = atBottom ? static_cast<float>(kScreenHeight - kH - 18) : 60.0f;
+    const float hidden = atBottom ? static_cast<float>(kScreenHeight + 10) : -static_cast<float>(kH + 10);
 
     const float t = session_->time();
     float slide = 1.0f; // 1 = fully shown
-    if (t < 0.3f) slide = t / 0.3f;
-    else if (t > kBannerTime - 0.3f) slide = (kBannerTime - t) / 0.3f;
-    const int iy = static_cast<int>(hidden + (rest - hidden) * std::clamp(slide, 0.0f, 1.0f));
+    if (t < 0.4f) {
+        const float u = t / 0.4f; // ease-out-back
+        slide = 1.0f + 2.2f * std::pow(u - 1.0f, 3.0f) + 1.2f * std::pow(u - 1.0f, 2.0f);
+    } else if (t > kBannerTime - 0.3f) {
+        const float u = (kBannerTime - t) / 0.3f;
+        slide = u * u;
+    }
+    const int iy = static_cast<int>(hidden + (rest - hidden) * slide);
 
-    char title[64];
-    std::snprintf(title, sizeof(title), "%s  %s", level_.id.c_str(), level_.name.c_str());
     char goal[64];
     objectiveText(goal, sizeof(goal));
     const BitmapFont& font = game_.font();
-    const int w = std::max(BitmapFont::textWidth(title, 3), BitmapFont::textWidth(goal, 2)) + 40;
-    ui::drawPanel(r, SDL_Rect{kScreenWidth / 2 - w / 2, iy, w, kH});
-    font.drawCentered(r, kScreenWidth / 2, iy + 10, title, 3, ui::kYellow);
-    font.drawCentered(r, kScreenWidth / 2, iy + 38, goal, 2, ui::kWhite);
+    const char* world = worldDef(level_.world).name;
+    const int textW = std::max({BitmapFont::textWidth(level_.name, 3), BitmapFont::textWidth(goal, 2),
+                                BitmapFont::textWidth(world, 1)});
+    const int w = textW + 116;
+    const int x = kScreenWidth / 2 - w / 2;
+    ui::drawPanel(r, SDL_Rect{x, iy, w, kH});
+
+    // Level badge: a gold disc with the level number.
+    const int bx = x + 46, by = iy + kH / 2;
+    draw::fillCircle(r, bx, by, 30, SDL_Color{176, 118, 22, 255});
+    draw::fillCircle(r, bx, by, 27, ui::kYellow);
+    draw::softEllipse(r, bx - 8, by - 12, 14, 7, SDL_Color{255, 255, 255, 150});
+    font.drawCentered(r, bx, by - BitmapFont::lineHeight(2) / 2, level_.id, 2, ui::kInk, false);
+
+    const int tx = x + 92;
+    font.draw(r, tx, iy + 8, world, 1, ui::kMint);
+    font.drawShadowed(r, tx, iy + 22, level_.name, 3, ui::kYellow);
+    font.draw(r, tx, iy + 52, goal, 2, ui::kWhite);
 }
 
 void PlayScene::renderKnockOut(SDL_Renderer* r, Vec2 cam) const {
@@ -1021,13 +1053,14 @@ void PlayScene::renderBossGround(SDL_Renderer* r, Vec2 cam) const {
         if (!ring.active || ring.delay > 0.0f) continue;
         const float fade = 1.0f - ring.radius / Boss::kRingMaxRadius;
         const Vec2 c = ring.center - cam;
-        const int beads = std::clamp(static_cast<int>(ring.radius * 6.2832f / 8.0f), 12, 240);
+        // Beads every ~10 px; the soft glow on every other one keeps the draw count low.
+        const int beads = std::clamp(static_cast<int>(ring.radius * 6.2832f / 10.0f), 12, 200);
         for (int i = 0; i < beads; ++i) {
             const float a = 6.2832f * static_cast<float>(i) / static_cast<float>(beads);
             const int x = static_cast<int>(c.x + std::cos(a) * ring.radius);
             const int y = static_cast<int>(c.y + std::sin(a) * ring.radius * 0.92f);
             if (x < -10 || y < -10 || x > kScreenWidth + 10 || y > kScreenHeight + 10) continue;
-            draw::softEllipse(r, x, y + 1, 13, 8, SDL_Color{255, 150, 40, static_cast<Uint8>(200.0f * fade)});
+            if (i % 2 == 0) draw::softEllipse(r, x, y + 1, 16, 9, SDL_Color{255, 150, 40, static_cast<Uint8>(210.0f * fade)});
             draw::fillCircle(r, x, y - 1, 4, SDL_Color{255, 248, 210, static_cast<Uint8>(255.0f * fade)});
         }
     }
@@ -1228,6 +1261,12 @@ void PlayScene::renderCelebration(SDL_Renderer* r) const {
 // ---------------------------------------------------------------------------
 // Debug
 // ---------------------------------------------------------------------------
+
+bool PlayScene::focusPoint(Vec2& screen) const {
+    // Scene transitions close and open around the hero.
+    screen = session_->player().position() - camera_.position() - Vec2{0.0f, 16.0f};
+    return true;
+}
 
 void PlayScene::fillDebugInfo(DebugInfo& info) const {
     const Player& player = session_->player();

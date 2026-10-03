@@ -3,6 +3,7 @@
 #include "Game.h"
 #include "LevelLoader.h"
 #include "Platform.h"
+#include "Synth.h"
 
 #include <SDL.h>
 
@@ -10,7 +11,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -29,6 +33,7 @@ void printUsage() {
         "  --frames N          quit after N frames\n"
         "  --screenshot FILE   save the last frame as PNG (use with --frames)\n"
         "  --smoke-test        run the scripted self-test and exit (0 = pass)\n"
+        "  --export-audio DIR  write the built-in sounds and music as WAV files\n"
         "  --menu-test         walk through every menu with scripted input (0 = pass)\n"
         "  --scene NAME        start on: title, menu, levels, scores, settings, controls, collection\n"
         "  --demo-progress     use sample progress (records, gems); nothing is saved\n"
@@ -60,6 +65,27 @@ int checkLevels() {
 
 } // namespace
 
+// Writes every built-in sound and music loop as WAV files (to listen to them,
+// or as a starting point for replacements in assets/audio/).
+int exportAudio(const std::string& dir) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    auto write = [&](const std::string& name, const pd::synth::Buffer& b) {
+        const std::vector<uint8_t> wav = pd::synth::toWav(b);
+        const std::string path = dir + "/" + name + ".wav";
+        std::ofstream f(path, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(wav.data()), static_cast<std::streamsize>(wav.size()));
+        std::printf("%s (%.2f s)\n", path.c_str(), static_cast<double>(b.seconds()));
+        return static_cast<bool>(f);
+    };
+    bool ok = true;
+    for (int i = 0; i < static_cast<int>(pd::Sfx::Count); ++i)
+        ok &= write(pd::AudioManager::sfxName(static_cast<pd::Sfx>(i)), pd::synth::makeSfx(static_cast<pd::Sfx>(i)));
+    for (pd::MusicTrack t : {pd::MusicTrack::Title, pd::MusicTrack::Meadow, pd::MusicTrack::Boss})
+        ok &= write(pd::AudioManager::musicName(t), pd::synth::makeMusic(t));
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char* argv[]) {
     pd::GameOptions options;
     for (int i = 1; i < argc; ++i) {
@@ -80,6 +106,7 @@ int main(int argc, char* argv[]) {
         else if (!std::strcmp(arg, "--demo-progress")) options.demoProgress = true;
         else if (!std::strcmp(arg, "--scene")) options.startScene = next();
         else if (!std::strcmp(arg, "--check-levels")) return checkLevels();
+        else if (!std::strcmp(arg, "--export-audio")) return exportAudio(next());
         else if (!std::strcmp(arg, "--help") || !std::strcmp(arg, "-h")) {
             printUsage();
             return 0;

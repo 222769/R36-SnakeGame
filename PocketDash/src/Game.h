@@ -13,6 +13,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace pd {
 
@@ -91,6 +92,7 @@ private:
     void step(float dt);
     void render();
     void renderDebugOverlay();
+    void renderTransition();
     void toggleFullscreen();
     bool saveScreenshot(const std::string& path);
     void applySmokeTestInput();
@@ -113,6 +115,16 @@ private:
     Sprites sprites_;
     std::unique_ptr<Scene> scene_;
     std::unique_ptr<Scene> pendingScene_;
+
+    // Iris wipe between scenes: the old scene closes into a circle, then the
+    // new one opens out of it. Off in scripted tests (they count frames).
+    enum class Transition { None, Closing, Opening };
+    static constexpr float kIrisTime = 0.32f;
+    bool transitionsEnabled_ = true;
+    Transition transition_ = Transition::None;
+    float transitionTime_ = 0.0f;
+    Vec2 irisCenter_;
+    std::vector<SDL_Rect> irisRects_;
 
     std::string startLevel_; // --level override ("" = continue from progress)
     bool running_ = true;

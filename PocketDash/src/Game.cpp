@@ -96,6 +96,15 @@ Game::Game(const GameOptions& options) : options_(options) {
     else if (!options_.startLevel.empty()) startLevel_ = options_.startLevel;
 
     scene_ = makeStartScene();
+    // Scripted tests count frames, so they skip the wipes; everything else
+    // opens with one.
+    transitionsEnabled_ = !options_.smokeTest && !options_.menuTest;
+    irisRects_.reserve(kScreenHeight * 2);
+    if (transitionsEnabled_) {
+        transition_ = Transition::Opening;
+        irisCenter_ = Vec2{kScreenWidth * 0.5f, kScreenHeight * 0.5f};
+        scene_->focusPoint(irisCenter_);
+    }
 }
 
 std::unique_ptr<Scene> Game::makeStartScene() {
@@ -228,11 +237,72 @@ void Game::step(float dt) {
     }
     if (input_.down(Action::Select) && input_.pressed(Action::L1)) debug_ = !debug_;
 
+    if (transition_ == Transition::Closing) {
+        // The old scene holds still while the iris closes on it.
+        transitionTime_ += dt;
+        if (transitionTime_ >= kIrisTime) {
+            scene_ = std::move(pendingScene_);
+            transition_ = Transition::Opening;
+            transitionTime_ = 0.0f;
+            Vec2 focus{kScreenWidth * 0.5f, kScreenHeight * 0.5f};
+            scene_->focusPoint(focus);
+            irisCenter_ = focus;
+        }
+        input_.endUpdateStep();
+        simTime_ += dt;
+        return;
+    }
+
     scene_->update(dt);
     input_.endUpdateStep();
     simTime_ += dt;
+    if (transition_ == Transition::Opening) {
+        transitionTime_ += dt;
+        if (transitionTime_ >= kIrisTime) transition_ = Transition::None;
+    }
 
-    if (pendingScene_) scene_ = std::move(pendingScene_);
+    if (pendingScene_) {
+        if (!transitionsEnabled_) {
+            scene_ = std::move(pendingScene_);
+            return;
+        }
+        Vec2 focus{kScreenWidth * 0.5f, kScreenHeight * 0.5f};
+        scene_->focusPoint(focus);
+        irisCenter_ = focus;
+        transition_ = Transition::Closing;
+        transitionTime_ = 0.0f;
+    }
+}
+
+void Game::renderTransition() {
+    if (transition_ == Transition::None) return;
+    const float p = std::clamp(transitionTime_ / kIrisTime, 0.0f, 1.0f);
+    const float ease = p * p * (3.0f - 2.0f * p);
+    const float cx = std::clamp(irisCenter_.x, 0.0f, static_cast<float>(kScreenWidth));
+    const float cy = std::clamp(irisCenter_.y, 0.0f, static_cast<float>(kScreenHeight));
+    // Big enough to uncover the farthest corner.
+    const float maxR = std::sqrt(std::max(cx, kScreenWidth - cx) * std::max(cx, kScreenWidth - cx) +
+                                 std::max(cy, kScreenHeight - cy) * std::max(cy, kScreenHeight - cy)) + 2.0f;
+    const float radius = maxR * (transition_ == Transition::Closing ? 1.0f - ease : ease);
+
+    // Black everywhere outside the circle: one span per row, one draw call.
+    irisRects_.clear();
+    const int icx = static_cast<int>(cx);
+    for (int y = 0; y < kScreenHeight; ++y) {
+        const float dy = static_cast<float>(y) + 0.5f - cy;
+        if (std::fabs(dy) >= radius) {
+            irisRects_.push_back(SDL_Rect{0, y, kScreenWidth, 1});
+            continue;
+        }
+        const int half = static_cast<int>(std::sqrt(radius * radius - dy * dy));
+        if (icx - half > 0) irisRects_.push_back(SDL_Rect{0, y, icx - half, 1});
+        if (icx + half < kScreenWidth) irisRects_.push_back(SDL_Rect{icx + half, y, kScreenWidth - icx - half, 1});
+    }
+    SDL_Renderer* r = renderer_.get();
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(r, 12, 14, 24, 255);
+    SDL_RenderFillRects(r, irisRects_.data(), static_cast<int>(irisRects_.size()));
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 }
 
 int Game::run() {
@@ -254,6 +324,7 @@ int Game::run() {
         accumulator += frameTime;
 
         processEvents();
+        audio_.update();
 
         if (options_.smokeTest || options_.menuTest) {
             accumulator = kFixedDt; // deterministic: exactly one step per frame
@@ -324,6 +395,7 @@ void Game::render() {
     SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
     SDL_RenderClear(r);
     scene_->render(r);
+    renderTransition();
     if (debug_) {
         scene_->renderDebug(r);
         renderDebugOverlay();

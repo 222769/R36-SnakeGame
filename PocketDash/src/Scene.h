@@ -39,6 +39,8 @@ public:
     virtual void render(SDL_Renderer* r) = 0;
 
     virtual void fillDebugInfo(DebugInfo& /*info*/) const {}
+    // Where screen transitions should close/open (default: screen centre).
+    virtual bool focusPoint(Vec2& /*screen*/) const { return false; }
     // Draws collision boxes etc. on top of the scene when debug mode is on.
     virtual void renderDebug(SDL_Renderer* /*r*/) const {}
 

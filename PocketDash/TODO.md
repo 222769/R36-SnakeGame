@@ -203,15 +203,22 @@ Legend: `[x]` done · `[ ]` to do · `[~]` partly done / skeleton in place
 - [x] Painted title backdrop: gradient sky, glowing sun, hazy hill layers, shaded clouds
 - [ ] Check on the device that the extra startup painting stays under ~2 s
 
-## Phase 8: Audio, animation, particles, transitions, polish
+## ✅ Phase 8: Audio, animation, particles, transitions, polish (complete)
 
-- [ ] Placeholder SFX synthesised at startup when no files exist (chiptune beeps)
-- [ ] Music: title, meadow, boss (and a crossfade between them)
-- [~] Particle pool: a basic fixed-size `Effects` pool exists (Phase 2). Extend with hit stars and leaf bursts.
-- [ ] Screen transitions (iris wipe), level title cards
-- [ ] Screen shake (respects the setting), hit-stop on damage
+- [x] Sound effects synthesised at startup when no files exist: soft bells, warm tones and filtered noise
+      instead of harsh beeps (`Synth.cpp`, 19 effects in about 20 ms)
+- [x] Music: title, meadow and boss loops composed on a worker thread (chords, bass, arpeggio, seeded melody,
+      percussion); crossfades on two reserved channels; file music still supported; ducking under the fanfare
+- [x] `--export-audio DIR` writes every built-in sound as WAV
+- [x] Particle pool (96): softer sparkles, dust and splashes, plus hit stars (stomps, boss hits), leaves
+      (secrets, boss hits) and wood chips (smashed blocks)
+- [x] Iris-wipe scene transitions centred on the hero (off in scripted tests); animated level title card
+      with a level badge
+- [x] Screen shake respects the setting; hit-stop on damage (0.12 s), stomps and boss hits
 - [x] TTF UI font (DejaVu Sans Bold) with pixel-font fallback (visual overhaul)
+- [x] Cheaper boss ring drawing (fewer glow sprites)
 - [ ] Performance pass on the device: profile with the debug overlay, target a stable 60 FPS
+- [ ] Listen on the device and tune the mix (speaker and headphones)
 
 ---
 
