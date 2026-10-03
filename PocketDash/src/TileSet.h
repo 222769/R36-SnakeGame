@@ -40,7 +40,7 @@ public:
         kArtCount
     };
 
-    static constexpr int kArtSize = 16; // atlas pixels per tile (drawn at 2x)
+    static constexpr int kArtSize = 32; // atlas pixels per tile (drawn 1:1)
 
     bool build(SDL_Renderer* renderer, const WorldTheme& theme);
     void prepare(const Level& level);

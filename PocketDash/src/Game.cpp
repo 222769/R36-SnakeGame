@@ -69,7 +69,9 @@ Game::Game(const GameOptions& options) : options_(options) {
         audio_.setSfxVolume(settings_.sfxVolume);
     }
 
-    if (!font_.create(renderer_.get())) throw std::runtime_error("Failed to create the built-in font");
+    if (!font_.create(renderer_.get(), platform::dataPath("assets/fonts/DejaVuSans-Bold.ttf")))
+        throw std::runtime_error("Failed to create the built-in font");
+    draw::initSkin(renderer_.get());
     if (!sprites_.create(renderer_.get(), platform::dataPath("assets/sprites/")))
         throw std::runtime_error("Failed to create sprites");
 
@@ -88,6 +90,7 @@ Game::~Game() {
     // Scenes may hold textures: release them before the renderer goes away.
     pendingScene_.reset();
     scene_.reset();
+    draw::releaseSkin();
 }
 
 void Game::createWindowAndRenderer() {

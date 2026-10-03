@@ -177,6 +177,16 @@ Legend: `[x]` done · `[ ]` to do · `[~]` partly done / skeleton in place
 - [ ] 3 phases, faster and adding a double-jump in phase 3; boss health bar
 - [ ] Boss intro card and defeat celebration
 
+## ✅ Visual overhaul: modern look, natural colours (complete)
+
+- [x] `Canvas` software painter: SDF anti-aliasing, sphere lighting, soft shadows, tileable value noise
+- [x] 32x32 tiles painted with noise-textured grass, leafy hedges, calm water with glints, shaded props
+- [x] Smooth, shaded sprites drawn 1:1 (hero 32x40, enemies 32x32, items 24x24) plus a large title hero
+- [x] Natural world palettes (`World.cpp`)
+- [x] Smooth TTF text, rounded anti-aliased panels with drop shadows, anti-aliased circles and shadows
+- [x] Painted title backdrop: gradient sky, glowing sun, hazy hill layers, shaded clouds
+- [ ] Check on the device that the extra startup painting stays under ~2 s
+
 ## Phase 8: Audio, animation, particles, transitions, polish
 
 - [ ] Placeholder SFX synthesised at startup when no files exist (chiptune beeps)
@@ -184,7 +194,7 @@ Legend: `[x]` done · `[ ]` to do · `[~]` partly done / skeleton in place
 - [~] Particle pool: a basic fixed-size `Effects` pool exists (Phase 2). Extend with hit stars and leaf bursts.
 - [ ] Screen transitions (iris wipe), level title cards
 - [ ] Screen shake (respects the setting), hit-stop on damage
-- [ ] Optional TTF display font
+- [x] TTF UI font (DejaVu Sans Bold) with pixel-font fallback (visual overhaul)
 - [ ] Performance pass on the device: profile with the debug overlay, target a stable 60 FPS
 
 ---

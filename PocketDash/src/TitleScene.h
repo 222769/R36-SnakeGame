@@ -20,6 +20,7 @@ private:
     void buildBackground(SDL_Renderer* r);
 
     TexturePtr background_;
+    TexturePtr cloud_;
     float time_ = 0.0f;
     float cloudScroll_ = 0.0f;
 };

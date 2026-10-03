@@ -1,5 +1,6 @@
 #include "TileSet.h"
 
+#include "Canvas.h"
 #include "Constants.h"
 #include "Level.h"
 
@@ -11,11 +12,7 @@ namespace pd {
 namespace {
 
 constexpr int S = TileSet::kArtSize;
-
-SDL_Color shade(SDL_Color c, float f) {
-    auto ch = [f](Uint8 v) { return static_cast<Uint8>(std::clamp(static_cast<float>(v) * f, 0.0f, 255.0f)); };
-    return SDL_Color{ch(c.r), ch(c.g), ch(c.b), 255};
-}
+constexpr float SF = static_cast<float>(S);
 
 uint32_t hash(int a, int b, int salt = 0) {
     uint32_t h = static_cast<uint32_t>(a) * 374761393u + static_cast<uint32_t>(b) * 668265263u +
@@ -24,232 +21,314 @@ uint32_t hash(int a, int b, int salt = 0) {
     return h ^ (h >> 16);
 }
 
-// Draws into one 16x16 atlas slot; everything is clipped to the slot so
-// shapes never bleed into neighbouring tiles.
-struct Painter {
-    SDL_Surface* surface;
-    int ox;
+// Deterministic random float in [0,1) for art placement.
+float rnd(uint32_t& state) {
+    state = state * 1664525u + 1013904223u;
+    return static_cast<float>((state >> 8) & 0xffff) / 65536.0f;
+}
 
-    void rect(int x, int y, int w, int h, SDL_Color c) const {
-        const int x0 = std::max(x, 0);
-        const int y0 = std::max(y, 0);
-        const int x1 = std::min(x + w, S);
-        const int y1 = std::min(y + h, S);
-        if (x1 <= x0 || y1 <= y0) return;
-        const SDL_Rect r{ox + x0, y0, x1 - x0, y1 - y0};
-        SDL_FillRect(surface, &r, SDL_MapRGBA(surface->format, c.r, c.g, c.b, c.a));
+Col fromSdl(SDL_Color c) { return Col::rgb(c.r, c.g, c.b, c.a); }
+
+// --- Ground ------------------------------------------------------------------
+
+// Seamless grass: two layers of tileable noise blend light and dark greens,
+// with fine grain, then per-variant details (blades, clover, pebbles, flowers).
+void paintGrass(Canvas& c, const WorldTheme& t, int variant, bool alt) {
+    const Col base = fromSdl(alt ? t.groundAlt : t.ground);
+    const Col dark = base.scaled(0.80f);
+    const Col light = Col::mix(base.scaled(1.12f), Col::rgb(200, 210, 120), 0.08f);
+    c.paint([&](int x, int y) {
+        const float n = tileFbm(static_cast<float>(x), static_cast<float>(y), S, 7u, 3);
+        const float grain = tileNoise(static_cast<float>(x) * 0.9f, static_cast<float>(y) * 0.9f, 29, 3u);
+        Col col = Col::mix(dark, light, std::clamp(n * 1.4f - 0.2f, 0.0f, 1.0f));
+        return col.scaled(0.94f + grain * 0.12f);
+    });
+    uint32_t rs = 1000u + static_cast<uint32_t>(variant) * 77u;
+    // Grass blades: short strokes leaning slightly, darker at the base.
+    const int blades = 10 + variant * 2;
+    for (int i = 0; i < blades; ++i) {
+        const float x = 3.0f + rnd(rs) * (SF - 6.0f);
+        const float y = 5.0f + rnd(rs) * (SF - 8.0f);
+        const float lean = (rnd(rs) - 0.5f) * 3.0f;
+        const float h = 3.0f + rnd(rs) * 3.0f;
+        const bool lit = rnd(rs) > 0.5f;
+        c.line({x, y}, {x + lean, y - h}, 1.0f, (lit ? light.scaled(1.05f) : dark.scaled(0.9f)).withAlpha(0.8f));
     }
-    void px(int x, int y, SDL_Color c) const { rect(x, y, 1, 1, c); }
-    void ellipse(int cx, int cy, int rx, int ry, SDL_Color c) const {
-        for (int dy = -ry; dy <= ry; ++dy) {
-            const float t = static_cast<float>(dy) / static_cast<float>(ry);
-            const int half = static_cast<int>(std::lround(rx * std::sqrt(std::max(0.0f, 1.0f - t * t))));
-            rect(cx - half, cy + dy, half * 2 + 1, 1, c);
+    if (variant == 1) { // clover patch
+        for (int i = 0; i < 3; ++i) {
+            const float x = 9.0f + rnd(rs) * 14.0f;
+            const float y = 9.0f + rnd(rs) * 14.0f;
+            for (int k = 0; k < 3; ++k) {
+                const float a = static_cast<float>(k) * 2.094f;
+                c.fillCircle(x + std::cos(a) * 1.6f, y + std::sin(a) * 1.6f, 1.5f, dark.scaled(0.85f));
+            }
+        }
+    } else if (variant == 2) { // pebbles
+        for (int i = 0; i < 3; ++i) {
+            const float x = 6.0f + rnd(rs) * 20.0f;
+            const float y = 6.0f + rnd(rs) * 20.0f;
+            c.softEllipse(x + 0.5f, y + 1.2f, 2.6f, 1.4f, Col::rgb(30, 40, 20, 90));
+            c.sphere(x, y, 1.8f + rnd(rs), 1.3f + rnd(rs) * 0.6f, Col::rgb(170, 165, 150), 0.2f, 0.6f);
+        }
+    } else if (variant == 3) { // a few wild flowers
+        const Col petals[] = {Col::rgb(250, 250, 245), Col::rgb(255, 214, 90), Col::rgb(240, 150, 180)};
+        for (int i = 0; i < 2; ++i) {
+            const float x = 7.0f + rnd(rs) * 18.0f;
+            const float y = 7.0f + rnd(rs) * 18.0f;
+            const Col p = petals[(variant + i) % 3];
+            c.line({x, y + 1.0f}, {x, y + 4.0f}, 1.0f, dark);
+            for (int k = 0; k < 5; ++k) {
+                const float a = static_cast<float>(k) * 1.2566f;
+                c.fillCircle(x + std::cos(a) * 1.7f, y + std::sin(a) * 1.7f, 1.3f, p);
+            }
+            c.fillCircle(x, y, 1.0f, Col::rgb(240, 170, 40));
         }
     }
-    void circle(int cx, int cy, int r, SDL_Color c) const { ellipse(cx, cy, r, r, c); }
-};
-
-void paintGrass(const Painter& p, SDL_Color base, int variant) {
-    p.rect(0, 0, S, S, base);
-    const SDL_Color blade = shade(base, 0.78f);
-    const SDL_Color light = shade(base, 1.12f);
-    for (int i = 0; i < 3; ++i) {
-        const uint32_t h = hash(variant, i, 7);
-        const int x = 1 + static_cast<int>(h % 13);
-        const int y = 2 + static_cast<int>((h >> 8) % 12);
-        p.px(x, y, blade);       // little "v" tuft
-        p.px(x + 1, y - 1, blade);
-    }
-    for (int i = 0; i < 2; ++i) {
-        const uint32_t h = hash(variant, i, 11);
-        p.px(static_cast<int>(h % 16), static_cast<int>((h >> 8) % 16), light);
-    }
-    if (variant == 3) { // a flower
-        const SDL_Color petal{255, 255, 255, 255};
-        p.px(10, 4, petal);
-        p.px(9, 5, petal);
-        p.px(11, 5, petal);
-        p.px(10, 6, petal);
-        p.px(10, 5, SDL_Color{255, 200, 60, 255});
-    }
 }
 
-void paintHedgeTop(const Painter& p, const WorldTheme& t, bool secret) {
-    p.rect(0, 0, S, S, t.wall);
-    const SDL_Color light = shade(t.wall, 1.22f);
-    const SDL_Color dark = shade(t.wall, 0.8f);
-    for (int i = 0; i < 9; ++i) {
-        const uint32_t h = hash(i, 3, 21);
-        const int x = static_cast<int>(h % 15);
-        const int y = static_cast<int>((h >> 8) % 15);
-        p.rect(x, y, 2, 1, light);
+// --- Hedges --------------------------------------------------------------------
+
+// A dense bush made of many small lit leaf clusters. Clusters are repeated at
+// +-32 px so leaves crossing a tile edge continue seamlessly on the neighbour.
+void paintLeaves(Canvas& c, const WorldTheme& t, uint32_t seed, int count, float yMax, bool wrapY, float tint) {
+    const Col wall = fromSdl(t.wall);
+    uint32_t rs = seed;
+    struct Clump {
+        float x, y, r;
+        Col col;
+    };
+    std::vector<Clump> clumps;
+    for (int i = 0; i < count; ++i) {
+        const float k = 0.82f + rnd(rs) * 0.36f;
+        Col col = wall.scaled(k);
+        if (tint > 0.0f && rnd(rs) < 0.15f) col = Col::mix(col, Col::rgb(170, 190, 90), tint);
+        clumps.push_back({rnd(rs) * SF, rnd(rs) * yMax, 4.0f + rnd(rs) * 3.5f, col});
     }
-    for (int i = 0; i < 8; ++i) {
-        const uint32_t h = hash(i, 5, 33);
-        p.px(static_cast<int>(h % 16), static_cast<int>((h >> 8) % 16), dark);
+    std::sort(clumps.begin(), clumps.end(), [](const Clump& a, const Clump& b) { return a.y < b.y; });
+    for (const Clump& cl : clumps)
+        for (int ox = -1; ox <= 1; ++ox)
+            for (int oy = wrapY ? -1 : 0; oy <= (wrapY ? 1 : 0); ++oy)
+                c.sphere(cl.x + static_cast<float>(ox) * SF, cl.y + static_cast<float>(oy) * SF, cl.r, cl.r * 0.9f,
+                         cl.col, 0.12f, 0.45f);
+}
+
+void paintHedgeTop(Canvas& c, const WorldTheme& t, bool secret) {
+    c.clear(fromSdl(t.wallShade).scaled(0.8f));
+    paintLeaves(c, t, 4242u, 34, SF, true, secret ? 0.5f : 0.0f);
+}
+
+void paintHedgeFront(Canvas& c, const WorldTheme& t, bool secret) {
+    paintHedgeTop(c, t, secret);
+    // The front face: leaves in shadow, darkening towards the ground.
+    const Col shade = fromSdl(t.wallShade);
+    for (int y = 18; y < S; ++y) {
+        const float k = static_cast<float>(y - 18) / static_cast<float>(S - 18);
+        for (int x = 0; x < S; ++x) {
+            const float n = tileFbm(static_cast<float>(x), static_cast<float>(y) * 2.0f, S, 91u, 2);
+            const Col leaf = shade.scaled(0.75f + n * 0.4f - k * 0.25f);
+            c.blend(x, y, leaf, std::min(1.0f, k * 1.6f + 0.25f));
+        }
     }
-    if (secret) { // a subtle hint for sharp-eyed players
-        p.px(7, 7, t.groundAlt);
-        p.px(8, 8, t.groundAlt);
-    }
+    c.gradientRect(0, SF - 3.0f, SF, 3.0f, Col::rgb(0, 0, 0, 40), Col::rgb(0, 0, 0, 120));
 }
 
-void paintHedgeFront(const Painter& p, const WorldTheme& t, bool secret) {
-    paintHedgeTop(p, t, secret);
-    p.rect(0, 9, S, 1, shade(t.wall, 0.7f));
-    p.rect(0, 10, S, 6, t.wallShade);
-    const SDL_Color stripe = shade(t.wallShade, 0.8f);
-    for (int x = 1; x < S; x += 3) p.rect(x, 11 + (x % 2), 1, 3, stripe);
-    p.rect(0, 15, S, 1, shade(t.wallShade, 0.6f));
+void paintTinyGap(Canvas& c, const WorldTheme& t) {
+    paintHedgeTop(c, t, false);
+    // A small, deep hole at the bottom: only a tiny hero fits.
+    c.fillRoundRect(10.0f, 17.0f, 12.0f, 16.0f, 6.0f, Col::rgb(20, 24, 18));
+    c.fillRoundRect(12.0f, 20.0f, 8.0f, 13.0f, 4.0f, Col::rgb(8, 10, 8));
+    c.strokeRoundRect(9.5f, 16.5f, 13.0f, 17.0f, 6.0f, 1.2f, fromSdl(t.wall).scaled(0.6f));
 }
 
-void paintTree(const Painter& p, const WorldTheme& t) {
-    paintGrass(p, t.ground, 0);
-    p.ellipse(8, 14, 6, 1, shade(t.ground, 0.7f));
-    p.rect(7, 10, 2, 5, SDL_Color{120, 80, 50, 255});
-    p.circle(8, 7, 6, t.wallShade);
-    p.circle(8, 6, 5, t.wall);
-    p.circle(6, 4, 2, shade(t.wall, 1.22f));
-    p.px(10, 8, shade(t.wall, 1.22f));
-}
+// --- Objects on grass ----------------------------------------------------------
 
-void paintRock(const Painter& p, const WorldTheme& t) {
-    paintGrass(p, t.ground, 1);
-    p.ellipse(8, 14, 6, 1, shade(t.ground, 0.7f));
-    p.circle(8, 9, 5, SDL_Color{112, 112, 130, 255});
-    p.circle(8, 8, 5, SDL_Color{150, 150, 168, 255});
-    p.circle(6, 6, 2, SDL_Color{200, 200, 214, 255});
-    p.px(10, 10, SDL_Color{112, 112, 130, 255});
-    p.px(11, 9, SDL_Color{112, 112, 130, 255});
-}
-
-void paintWater(const Painter& p, const WorldTheme& t, int frame) {
-    p.rect(0, 0, S, S, t.water);
-    const SDL_Color ripple = shade(t.water, 1.25f);
-    for (int i = 0; i < 3; ++i) {
-        const uint32_t h = hash(i, 9, 41);
-        const int x = (static_cast<int>(h % 12) + frame * 2) % 13;
-        const int y = 2 + i * 5;
-        p.rect(x, y, 3, 1, ripple);
+void paintTree(Canvas& c, const WorldTheme& t) {
+    paintGrass(c, t, 0, false);
+    c.softEllipse(17.0f, 27.0f, 14.0f, 5.0f, Col::rgb(10, 30, 10, 120));
+    // Trunk: a cylinder (lit from the left).
+    for (int y = 18; y < 29; ++y)
+        for (int x = 13; x < 19; ++x) {
+            const float u = (static_cast<float>(x) - 13.0f) / 6.0f;
+            c.blend(x, y, Col::rgb(110, 76, 48).scaled(1.15f - u * 0.5f));
+        }
+    const Col leaf = fromSdl(t.wall);
+    c.sphere(16.0f, 13.0f, 13.0f, 11.5f, leaf.scaled(0.85f), 0.1f, 0.45f);
+    c.sphere(10.0f, 11.0f, 7.5f, 6.5f, leaf.scaled(1.0f), 0.1f, 0.5f);
+    c.sphere(21.0f, 10.0f, 7.5f, 6.5f, leaf.scaled(0.95f), 0.1f, 0.5f);
+    c.sphere(15.0f, 6.5f, 7.0f, 5.5f, leaf.scaled(1.1f), 0.12f, 0.55f);
+    // Leaf texture speckles.
+    uint32_t rs = 55u;
+    for (int i = 0; i < 26; ++i) {
+        const float x = 5.0f + rnd(rs) * 22.0f;
+        const float y = 2.0f + rnd(rs) * 20.0f;
+        c.fillCircle(x, y, 1.0f, leaf.scaled(rnd(rs) > 0.5f ? 1.25f : 0.7f).withAlpha(0.6f));
     }
 }
 
-void paintShore(const Painter& p, const WorldTheme& t, int frame) {
-    paintWater(p, t, frame);
-    p.rect(0, 0, S, 2, shade(t.ground, 0.7f));
-    const SDL_Color foam{230, 245, 255, 255};
-    for (int x = frame; x < S; x += 2) p.px(x, 2, foam);
+void paintRock(Canvas& c, const WorldTheme& t) {
+    paintGrass(c, t, 1, false);
+    c.softEllipse(17.0f, 25.0f, 13.0f, 5.0f, Col::rgb(10, 30, 10, 110));
+    c.sphere(16.0f, 18.0f, 11.5f, 9.5f, Col::rgb(132, 128, 124), 0.18f, 0.45f);
+    c.sphere(11.0f, 20.0f, 6.0f, 5.0f, Col::rgb(120, 116, 112), 0.15f, 0.45f);
+    c.paint([&](int x, int y) {
+        const float n = tileNoise(static_cast<float>(x) * 0.6f, static_cast<float>(y) * 0.6f, 19, 9u);
+        const Col here = c.get(x, y);
+        if (here.a < 0.9f || here.g > here.r + 0.05f) return Col{0, 0, 0, 0}; // only on the stone
+        return Col::rgb(40, 38, 36, static_cast<int>(n * 60.0f));
+    });
 }
 
-void paintBridge(const Painter& p, const WorldTheme& t, bool northSouth) {
-    paintWater(p, t, 0);
-    const SDL_Color wood{186, 124, 70, 255};
-    const SDL_Color gap{130, 82, 46, 255};
-    const SDL_Color rail{100, 62, 36, 255};
-    if (northSouth) {
-        p.rect(2, 0, 12, S, wood);
-        for (int y = 3; y < S; y += 4) p.rect(2, y, 12, 1, gap);
-        p.rect(1, 0, 1, S, rail);
-        p.rect(14, 0, 1, S, rail);
-    } else {
-        p.rect(0, 2, S, 12, wood);
-        for (int x = 3; x < S; x += 4) p.rect(x, 2, 1, 12, gap);
-        p.rect(0, 1, S, 1, rail);
-        p.rect(0, 14, S, 1, rail);
+void paintBoulder(Canvas& c, const WorldTheme& t) {
+    paintGrass(c, t, 1, false);
+    c.softEllipse(17.0f, 27.0f, 15.0f, 5.0f, Col::rgb(10, 30, 10, 130));
+    c.sphere(16.0f, 16.0f, 14.0f, 13.0f, Col::rgb(138, 126, 112), 0.15f, 0.42f);
+    // Deep cracks: a strong giant could smash this.
+    const Col crack = Col::rgb(50, 42, 36);
+    c.line({17, 4}, {14, 11}, 1.4f, crack);
+    c.line({14, 11}, {18, 17}, 1.4f, crack);
+    c.line({18, 17}, {15, 25}, 1.2f, crack);
+    c.line({18, 17}, {24, 20}, 1.0f, crack);
+    c.line({14, 11}, {8, 13}, 1.0f, crack);
+}
+
+void paintCrate(Canvas& c, const WorldTheme& t) {
+    paintGrass(c, t, 0, false);
+    c.softEllipse(17.0f, 28.0f, 15.0f, 4.0f, Col::rgb(10, 30, 10, 120));
+    const Col edge = Col::rgb(92, 58, 30);
+    c.fillRoundRect(3.0f, 3.0f, 26.0f, 25.0f, 2.5f, edge);
+    // Planks with wood grain (noise stretched horizontally).
+    for (int y = 5; y < 26; ++y)
+        for (int x = 5; x < 27; ++x) {
+            const float g = tileNoise(static_cast<float>(x) * 0.25f, static_cast<float>(y) * 1.4f, 32, 21u);
+            c.blend(x, y, Col::rgb(186, 128, 72).scaled(0.82f + g * 0.3f));
+        }
+    for (float y : {11.5f, 18.5f}) c.line({5, y}, {27, y}, 1.0f, edge.withAlpha(0.8f));
+    c.line({6, 24}, {26, 6}, 3.0f, edge);
+    c.line({6, 23}, {25, 5}, 1.0f, Col::rgb(220, 170, 110, 160));
+    for (float x : {6.5f, 25.5f})
+        for (float y : {6.5f, 24.5f}) c.sphere(x, y, 1.2f, 1.2f, Col::rgb(170, 170, 175), 0.6f);
+    c.gradientRect(5.0f, 5.0f, 22.0f, 4.0f, Col::rgb(255, 230, 190, 50), Col::rgb(255, 230, 190, 0));
+}
+
+void paintThorns(Canvas& c, const WorldTheme& t) {
+    paintGrass(c, t, 0, false);
+    const Col vine = Col::rgb(84, 52, 64);
+    const Col tip = Col::rgb(205, 190, 175);
+    const float centers[3][2] = {{9, 21}, {22, 12}, {22, 26}};
+    for (const auto& cc : centers) {
+        c.softEllipse(cc[0] + 1.0f, cc[1] + 3.0f, 8.0f, 3.0f, Col::rgb(10, 30, 10, 90));
+        for (int k = 0; k < 5; ++k) {
+            const float a = -2.6f + static_cast<float>(k) * 0.55f;
+            const Vec2 base{cc[0], cc[1]};
+            const Vec2 end{cc[0] + std::cos(a) * 8.0f, cc[1] + std::sin(a) * 7.0f};
+            c.line(base, end, 1.6f, vine);
+            // Thorns along each stem.
+            const Vec2 mid = base + (end - base) * 0.6f;
+            c.fillPolygon({mid + Vec2{-1.2f, 0}, mid + Vec2{1.2f, 0}, mid + Vec2{0, -3.0f}}, tip);
+            c.fillPolygon({end + Vec2{-1.0f, 0.5f}, end + Vec2{1.0f, 0.5f}, end + Vec2{0, -2.5f}}, tip);
+        }
+        c.fillCircle(cc[0] + 3.0f, cc[1] - 2.0f, 1.3f, Col::rgb(170, 30, 50));
     }
 }
 
-void paintThorns(const Painter& p, const WorldTheme& t) {
-    paintGrass(p, t.ground, 0);
-    const SDL_Color dark{110, 50, 90, 255};
-    const SDL_Color tip{235, 205, 235, 255};
-    const int centers[3][2] = {{4, 10}, {11, 6}, {11, 13}};
-    for (const auto& c : centers) {
-        p.rect(c[0] - 2, c[1] + 1, 5, 2, dark);
-        p.rect(c[0] - 1, c[1] - 1, 3, 2, dark);
-        p.px(c[0], c[1] - 3, tip);
-        p.px(c[0], c[1] - 2, dark);
-        p.px(c[0] - 3, c[1], tip);
-        p.px(c[0] + 3, c[1], tip);
+// --- Water ---------------------------------------------------------------------
+
+void paintWater(Canvas& c, const WorldTheme& t, int frame) {
+    // Calm water: a gentle low-contrast swell and a few scattered wave glints
+    // (random short arcs) so the 32 px repeat does not read as a grid.
+    const Col deep = fromSdl(t.water).scaled(0.9f);
+    const Col shallow = fromSdl(t.water).scaled(1.04f);
+    const float shift = static_cast<float>(frame) * 8.0f;
+    c.paint([&](int x, int y) {
+        const float n = tileFbm(static_cast<float>(x) + shift, static_cast<float>(y), S, 31u, 3);
+        return Col::mix(deep, shallow, n);
+    });
+    const Col glint = Col::rgb(226, 240, 250);
+    for (int i = 0; i < 5; ++i) {
+        const float gx = static_cast<float>((hash(i, 11) % 32 + frame * 8) % 32);
+        const float gy = 3.0f + static_cast<float>(hash(i, 12) % 26);
+        const float len = 3.0f + static_cast<float>(hash(i, 13) % 4);
+        const float alpha = 0.25f + static_cast<float>(hash(i, 14) % 20) / 100.0f;
+        // Draw wrapped so glints crossing the tile edge continue seamlessly.
+        for (float wrap : {-SF, 0.0f, SF})
+            c.line({gx + wrap - len, gy + 0.6f}, {gx + wrap + len, gy - 0.4f}, 1.1f, glint.withAlpha(alpha));
     }
 }
 
-void paintExit(const Painter& p, const WorldTheme& t, int frame) {
-    paintGrass(p, t.groundAlt, 0);
-    p.ellipse(8, 14, 5, 1, shade(t.ground, 0.7f));
-    p.rect(3, 13, 6, 2, SDL_Color{150, 150, 168, 255});
-    p.rect(5, 2, 1, 12, SDL_Color{235, 235, 245, 255});
-    p.px(5, 1, t.accent);
-    // Waving pennant: widths per row change between the two frames.
-    static const int widths[2][5] = {{7, 6, 5, 3, 1}, {6, 7, 5, 4, 2}};
-    const SDL_Color flag{232, 67, 79, 255};
-    for (int i = 0; i < 5; ++i) p.rect(6, 2 + i + (frame && i > 2 ? 1 : 0), widths[frame][i], 1, flag);
-    p.px(7, 3, shade(flag, 1.3f));
-}
-
-void paintCrate(const Painter& p, const WorldTheme& t) {
-    paintGrass(p, t.ground, 0);
-    const SDL_Color dark{110, 66, 34, 255};
-    const SDL_Color wood{196, 136, 74, 255};
-    const SDL_Color light{230, 178, 110, 255};
-    p.ellipse(8, 14, 7, 1, shade(t.ground, 0.7f));
-    p.rect(1, 2, 14, 12, dark);
-    p.rect(2, 3, 12, 10, wood);
-    // Diagonal brace and frame: reads clearly as "breakable box".
-    for (int i = 0; i < 10; ++i) p.rect(3 + i, 3 + i, 2, 1, dark);
-    p.rect(2, 3, 12, 1, light);
-    p.rect(2, 7, 12, 1, dark);
-    p.rect(2, 3, 1, 10, light);
-}
-
-void paintBoulder(const Painter& p, const WorldTheme& t) {
-    paintGrass(p, t.ground, 1);
-    p.ellipse(8, 14, 7, 1, shade(t.ground, 0.7f));
-    p.circle(8, 8, 7, SDL_Color{96, 92, 112, 255});
-    p.circle(8, 7, 6, SDL_Color{132, 128, 150, 255});
-    p.circle(6, 5, 2, SDL_Color{180, 176, 196, 255});
-    // Big crack: hints that something strong could smash it.
-    const SDL_Color crack{60, 56, 74, 255};
-    p.px(9, 3, crack);
-    p.px(9, 4, crack);
-    p.px(10, 5, crack);
-    p.px(10, 6, crack);
-    p.px(9, 7, crack);
-    p.px(11, 7, crack);
-    p.px(12, 8, crack);
-}
-
-void paintTinyGap(const Painter& p, const WorldTheme& t) {
-    paintHedgeTop(p, t, false);
-    // A small arched hole at the bottom: only a tiny hero fits.
-    const SDL_Color hole{24, 20, 36, 255};
-    p.rect(6, 10, 4, 6, hole);
-    p.rect(5, 11, 6, 5, hole);
-    p.px(5, 10, shade(t.wall, 0.7f));
-    p.px(10, 10, shade(t.wall, 0.7f));
-}
-
-void paintLock(const Painter& p, const WorldTheme& t) {
-    paintGrass(p, t.ground, 0);
-    const SDL_Color dark{100, 60, 32, 255};
-    const SDL_Color wood{176, 112, 60, 255};
-    // Fence bars with two cross rails.
-    for (int x = 1; x < S; x += 4) {
-        p.rect(x, 1, 3, 14, dark);
-        p.rect(x + 1, 2, 1, 12, wood);
+void paintShore(Canvas& c, const WorldTheme& t, int frame) {
+    paintWater(c, t, frame);
+    // Muddy grass lip, wet sand, then a line of foam.
+    c.gradientRect(0, 0, SF, 3.0f, fromSdl(t.ground).scaled(0.55f), Col::rgb(150, 130, 90));
+    c.gradientRect(0, 3.0f, SF, 3.0f, Col::rgb(196, 176, 128), Col::rgb(170, 160, 130, 120));
+    for (int x = 0; x < S; ++x) {
+        const float n = tileNoise(static_cast<float>(x) * 0.4f + static_cast<float>(frame) * 2.0f, 1.0f, 13, 5u);
+        c.blend(x, 6, Col::rgb(240, 248, 250), 0.4f + n * 0.5f);
+        c.blend(x, 7, Col::rgb(240, 248, 250), n * 0.4f);
     }
-    p.rect(0, 4, S, 2, dark);
-    p.rect(0, 11, S, 2, dark);
-    // Big golden padlock: "needs a key".
-    const SDL_Color gold{255, 210, 63, 255};
-    const SDL_Color goldDark{200, 140, 30, 255};
-    p.rect(6, 4, 4, 1, goldDark);
-    p.rect(5, 5, 1, 3, goldDark);
-    p.rect(10, 5, 1, 3, goldDark);
-    p.rect(4, 7, 8, 6, goldDark);
-    p.rect(5, 8, 6, 4, gold);
-    p.rect(7, 9, 2, 2, SDL_Color{40, 28, 60, 255});
+}
+
+void paintBridge(Canvas& c, const WorldTheme& t, bool northSouth) {
+    paintWater(c, t, 0);
+    Canvas planks(S, S);
+    // Draw as a north-south bridge (planks run across) and transpose if needed.
+    planks.softEllipse(16.0f, 16.0f, 16.0f, 18.0f, Col::rgb(0, 20, 40, 80));
+    for (int i = 0; i < 5; ++i) {
+        const float y = 1.0f + static_cast<float>(i) * 6.4f;
+        const float tone = 0.88f + static_cast<float>(hash(i, 3) % 20) / 100.0f;
+        for (int py = static_cast<int>(y); py < static_cast<int>(y) + 5; ++py)
+            for (int px = 4; px < 28; ++px) {
+                const float g = tileNoise(static_cast<float>(px) * 0.3f, static_cast<float>(py) * 1.5f, 32, 61u + i);
+                const float top = py == static_cast<int>(y) ? 1.15f : 1.0f;
+                planks.blend(px, py, Col::rgb(176, 122, 72).scaled(tone * (0.85f + g * 0.25f) * top));
+            }
+    }
+    planks.gradientRect(2.0f, 0.0f, 3.0f, SF, Col::rgb(110, 72, 42), Col::rgb(90, 58, 34));
+    planks.gradientRect(27.0f, 0.0f, 3.0f, SF, Col::rgb(110, 72, 42), Col::rgb(90, 58, 34));
+    for (int y = 0; y < S; ++y)
+        for (int x = 0; x < S; ++x) {
+            const Col p = planks.get(northSouth ? x : y, northSouth ? y : x);
+            c.blend(x, y, p);
+        }
+}
+
+// --- Special tiles -------------------------------------------------------------
+
+void paintExit(Canvas& c, const WorldTheme& t, int frame) {
+    paintGrass(c, t, 0, true);
+    c.softEllipse(13.0f, 28.0f, 10.0f, 3.5f, Col::rgb(10, 30, 10, 120));
+    c.sphere(11.0f, 27.0f, 7.0f, 3.0f, Col::rgb(150, 148, 145), 0.2f);
+    // Metal pole with a gold finial.
+    for (int y = 4; y < 27; ++y)
+        for (int x = 9; x < 12; ++x) c.blend(x, y, Col::rgb(205, 208, 215).scaled(x == 9 ? 1.1f : x == 11 ? 0.7f : 0.95f));
+    c.sphere(10.5f, 3.5f, 2.3f, 2.3f, Col::rgb(240, 190, 60), 0.7f);
+    // Waving cloth: the two frames bend the flag the other way.
+    const float w = frame ? 1.0f : -1.0f;
+    const std::vector<Vec2> flag = {{12, 5},          {17, 5.0f + w},  {22, 6.0f - w}, {28, 8.5f},
+                                    {22, 12.0f - w}, {17, 13.0f + w}, {12, 14}};
+    c.fillPolygon(flag, Col::rgb(214, 52, 58));
+    // Fold shading.
+    c.fillPolygon({{17, 5.0f + w}, {22, 6.0f - w}, {22, 12.0f - w}, {17, 13.0f + w}},
+                  Col::rgb(0, 0, 0, frame ? 40 : 15));
+    c.line({12.5f, 6.0f}, {22.0f, 7.5f - w}, 1.0f, Col::rgb(255, 255, 255, 70));
+}
+
+void paintLock(Canvas& c, const WorldTheme& t) {
+    paintGrass(c, t, 0, false);
+    c.softEllipse(16.0f, 29.0f, 16.0f, 3.0f, Col::rgb(10, 30, 10, 120));
+    const Col wood = Col::rgb(150, 98, 56);
+    for (int i = 0; i < 4; ++i) {
+        const float x = 2.0f + static_cast<float>(i) * 8.0f;
+        c.fillRoundRect(x, 2.0f, 5.0f, 27.0f, 2.0f, wood.scaled(0.75f));
+        c.fillRoundRect(x + 1.0f, 2.5f, 2.5f, 26.0f, 1.2f, wood.scaled(1.1f));
+    }
+    c.fillRoundRect(0.0f, 7.0f, SF, 3.0f, 1.0f, wood.scaled(0.85f));
+    c.fillRoundRect(0.0f, 20.0f, SF, 3.0f, 1.0f, wood.scaled(0.85f));
+    // Padlock.
+    c.ring(16.0f, 13.0f, 3.5f, 5.2f, Col::rgb(170, 170, 178));
+    c.fillRoundRect(9.5f, 13.0f, 13.0f, 11.0f, 2.5f, Col::rgb(214, 160, 40));
+    c.gradientRect(10.5f, 14.0f, 11.0f, 4.0f, Col::rgb(255, 230, 140, 160), Col::rgb(255, 230, 140, 0));
+    c.fillCircle(16.0f, 18.0f, 1.6f, Col::rgb(50, 36, 20));
+    c.line({16.0f, 18.5f}, {16.0f, 21.0f}, 1.4f, Col::rgb(50, 36, 20));
 }
 
 } // namespace
@@ -258,32 +337,40 @@ bool TileSet::build(SDL_Renderer* renderer, const WorldTheme& theme) {
     border_ = theme.wallShade;
     SurfacePtr s(SDL_CreateRGBSurfaceWithFormat(0, S * kArtCount, S, 32, SDL_PIXELFORMAT_RGBA32));
     if (!s) return false;
+    SDL_FillRect(s.get(), nullptr, 0);
 
-    auto slot = [&](Art a) { return Painter{s.get(), static_cast<int>(a) * S}; };
+    auto paint = [&](Art a, auto&& painter) {
+        Canvas c(S, S);
+        painter(c);
+        c.blitTo(s.get(), static_cast<int>(a) * S, 0);
+    };
     for (int v = 0; v < 4; ++v) {
-        paintGrass(slot(static_cast<Art>(kGrassA0 + v)), theme.ground, v);
-        paintGrass(slot(static_cast<Art>(kGrassB0 + v)), theme.groundAlt, v);
+        paint(static_cast<Art>(kGrassA0 + v), [&](Canvas& c) { paintGrass(c, theme, v, false); });
+        paint(static_cast<Art>(kGrassB0 + v), [&](Canvas& c) { paintGrass(c, theme, v, true); });
     }
-    paintHedgeTop(slot(kHedgeTop), theme, false);
-    paintHedgeFront(slot(kHedgeFront), theme, false);
-    paintHedgeTop(slot(kSecretTop), theme, true);
-    paintHedgeFront(slot(kSecretFront), theme, true);
-    paintTree(slot(kTree), theme);
-    paintRock(slot(kRock), theme);
-    paintWater(slot(kWater0), theme, 0);
-    paintWater(slot(kWater1), theme, 1);
-    paintShore(slot(kShore0), theme, 0);
-    paintShore(slot(kShore1), theme, 1);
-    paintBridge(slot(kBridgeV), theme, true);
-    paintBridge(slot(kBridgeH), theme, false);
-    paintThorns(slot(kThorns), theme);
-    paintExit(slot(kExit0), theme, 0);
-    paintExit(slot(kExit1), theme, 1);
-    paintCrate(slot(kCrate), theme);
-    paintBoulder(slot(kBoulder), theme);
-    paintTinyGap(slot(kTinyGap), theme);
-    paintLock(slot(kLock), theme);
+    paint(kHedgeTop, [&](Canvas& c) { paintHedgeTop(c, theme, false); });
+    paint(kHedgeFront, [&](Canvas& c) { paintHedgeFront(c, theme, false); });
+    paint(kSecretTop, [&](Canvas& c) { paintHedgeTop(c, theme, true); });
+    paint(kSecretFront, [&](Canvas& c) { paintHedgeFront(c, theme, true); });
+    paint(kTree, [&](Canvas& c) { paintTree(c, theme); });
+    paint(kRock, [&](Canvas& c) { paintRock(c, theme); });
+    paint(kWater0, [&](Canvas& c) { paintWater(c, theme, 0); });
+    paint(kWater1, [&](Canvas& c) { paintWater(c, theme, 1); });
+    paint(kShore0, [&](Canvas& c) { paintShore(c, theme, 0); });
+    paint(kShore1, [&](Canvas& c) { paintShore(c, theme, 1); });
+    paint(kBridgeV, [&](Canvas& c) { paintBridge(c, theme, true); });
+    paint(kBridgeH, [&](Canvas& c) { paintBridge(c, theme, false); });
+    paint(kThorns, [&](Canvas& c) { paintThorns(c, theme); });
+    paint(kExit0, [&](Canvas& c) { paintExit(c, theme, 0); });
+    paint(kExit1, [&](Canvas& c) { paintExit(c, theme, 1); });
+    paint(kCrate, [&](Canvas& c) { paintCrate(c, theme); });
+    paint(kBoulder, [&](Canvas& c) { paintBoulder(c, theme); });
+    paint(kTinyGap, [&](Canvas& c) { paintTinyGap(c, theme); });
+    paint(kLock, [&](Canvas& c) { paintLock(c, theme); });
 
+    // Tiles are drawn 1:1, so keep nearest filtering: linear would bleed
+    // neighbouring atlas slots into each other when the screen is scaled.
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
     atlas_.reset(SDL_CreateTextureFromSurface(renderer, s.get()));
     if (!atlas_) SDL_Log("[tiles] Failed to create tile atlas: %s", SDL_GetError());
     return atlas_ != nullptr;

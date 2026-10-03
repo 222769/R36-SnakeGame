@@ -215,8 +215,8 @@ void Enemy::render(SDL_Renderer* r, SDL_Texture* sheet, Vec2 camera) const {
 
     int row = 0;
     int frame = 0;
-    int w = Sprites::kEnemyFrame * kPixelScale;
-    int h = Sprites::kEnemyFrame * kPixelScale;
+    int w = Sprites::kEnemyFrame;
+    int h = Sprites::kEnemyFrame;
     int offsetX = 0;
     double angle = 0.0;
     SDL_RendererFlip flip = SDL_FLIP_NONE;

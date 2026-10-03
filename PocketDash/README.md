@@ -273,9 +273,10 @@ PocketDash/
 │   ├── Effects.*           fixed-size pool of sparkles and dust
 │   ├── AudioManager.*      SDL2_mixer wrapper, silent when audio/files are missing
 │   ├── SaveManager.*       INI-style key=value store, settings persistence
-│   ├── Sprites.*           programmatic placeholder pixel art (PNG overrides)
-│   ├── UI.*                built-in bitmap font, panels
-│   ├── Draw.*              shape helpers
+│   ├── Canvas.*            software painter: anti-aliased shapes, shading, tileable noise
+│   ├── Sprites.*           procedurally painted sprites (PNG overrides)
+│   ├── UI.*                TTF font atlases (pixel-font fallback), panels
+│   ├── Draw.*              shape helpers, anti-aliased skin (circles, rounded panels)
 │   ├── World.*             the 7 world definitions (themes, rules)
 │   ├── PowerUp.*           power-up types, durations, active timers and the slot
 │   └── Math.h, Constants.h, Settings.h, SdlPtr.h
@@ -293,8 +294,15 @@ PocketDash/
 * **Fixed 60 Hz timestep.** Physics behave identically on a fast PC and on
   the RK3326. With vsync, timing jitter snaps to exactly one step per frame,
   which avoids micro-stutter.
-* **640×480 logical resolution** with nearest-neighbour, integer scaling. On
-  the R36S this maps 1:1.
+* **640×480 logical resolution** with integer window scaling. On the R36S
+  this maps 1:1.
+* **Modern look, no image files.** All art is painted once at startup by
+  `Canvas`: anti-aliased shapes, sphere lighting, soft shadows and
+  tileable noise for grass and water, in natural colours. Sprites are drawn
+  1:1 with smooth filtering. Text uses DejaVu Sans Bold (bundled in
+  `assets/fonts/`), pre-rendered into one glyph atlas per size, and panels
+  are rounded 9-slice textures with soft drop shadows. Startup painting
+  takes about 0.2 s on a desktop.
 * **No allocations in the frame loop.** Tile art is baked into one atlas,
   text uses a single font atlas, effects live in a fixed pool, and debug
   strings use stack buffers. Only visible tiles are drawn.
@@ -311,8 +319,9 @@ PocketDash/
 * **RAII everywhere.** SDL handles live in `std::unique_ptr` with custom
   deleters (`SdlPtr.h`). SDL itself is initialised and shut down by a member
   object.
-* **Art is optional.** Placeholder sprites come from palette strings in
-  `Sprites.cpp`. To replace one, drop `assets/sprites/player.png` (2 frames ×
-  3 facings of 16×16: front, back, side) or `heart_full.png` /
-  `heart_empty.png` into the folder. Missing audio files are silently
+* **Art is optional.** Sprites are painted in `Sprites.cpp`. To replace a
+  sheet, drop a PNG such as `assets/sprites/player.png` (2 frames ×
+  3 facings of 32×40: front, back, side) into the folder. Layouts are listed
+  in `assets/sprites/README.md`. If the font file is missing, the built-in
+  pixel font is used. Missing audio files are silently
   skipped. See `assets/audio/README.md`.

@@ -346,7 +346,7 @@ void PlayScene::renderWorld(SDL_Renderer* r, Vec2 cam) const {
             const bool active = cps[i].reached; // coloured once touched
             const int sx = static_cast<int>(cps[i].pos.x - cam.x);
             const int sy = static_cast<int>(cps[i].pos.y - cam.y);
-            const int size = Sprites::kEnemyFrame * kPixelScale;
+            const int size = Sprites::kEnemyFrame;
             const SDL_Rect src{active ? Sprites::kEnemyFrame : 0, 0, Sprites::kEnemyFrame, Sprites::kEnemyFrame};
             const SDL_Rect dst{sx - 12, sy + 4 - size, size, size};
             SDL_RenderCopy(r, flag, &src, &dst);
@@ -369,7 +369,7 @@ void PlayScene::renderWorld(SDL_Renderer* r, Vec2 cam) const {
     // Signs.
     if (SDL_Texture* props = sprites.checkpoint()) {
         for (const SignSpawn& sign : level_.signs) {
-            const int size = Sprites::kEnemyFrame * kPixelScale;
+            const int size = Sprites::kEnemyFrame;
             const SDL_Rect src{Sprites::kPropSign * Sprites::kEnemyFrame, 0, Sprites::kEnemyFrame, Sprites::kEnemyFrame};
             const SDL_Rect dst{static_cast<int>(sign.pos.x - cam.x) - size / 2, static_cast<int>(sign.pos.y - cam.y) + 4 - size,
                                size, size};
@@ -388,7 +388,7 @@ void PlayScene::renderWorld(SDL_Renderer* r, Vec2 cam) const {
             const int sx = static_cast<int>(f.pos.x - cam.x);
             const int sy = static_cast<int>(f.pos.y - cam.y);
             draw::fillEllipse(r, sx, sy + 2, 8, 3, SDL_Color{0, 0, 0, 70});
-            const int size = Sprites::kEnemyFrame * kPixelScale;
+            const int size = Sprites::kEnemyFrame;
             const SDL_Rect src{0, Sprites::kRowFriend * Sprites::kEnemyFrame, Sprites::kEnemyFrame, Sprites::kEnemyFrame};
             const SDL_Rect dst{sx - size / 2, sy + 4 - size - static_cast<int>(lift), size, size};
             const Uint8 alpha = f.rescued ? static_cast<Uint8>(255.0f * std::max(0.0f, 1.0f - f.rescueTime)) : 255;
@@ -441,13 +441,13 @@ void PlayScene::renderHud(SDL_Renderer* r) const {
     const int maxHearts = session_->maxHearts();
     const int hearts = session_->hearts();
 
-    // Hearts (9x8 art at 3x) on a soft backing; they wobble after damage.
+    // Hearts (drawn 1:1) on a soft backing; they wobble after damage.
     const int wobble = hudHurt_ > 0.0f ? static_cast<int>(std::sin(hudHurt_ * 40.0f) * 3.0f) : 0;
     ui::drawPanel(r, SDL_Rect{6, 8, maxHearts * 32 + 10, 38},
                   hudHurt_ > 0.0f ? SDL_Color{120, 20, 40, 170} : SDL_Color{20, 16, 40, 140}, SDL_Color{0, 0, 0, 0});
     for (int i = 0; i < maxHearts; ++i) {
         SDL_Texture* tex = i < hearts ? game_.sprites().heartFull() : game_.sprites().heartEmpty();
-        const SDL_Rect dst{14 + i * 32 + wobble, 15, Sprites::kHeartW * 3, Sprites::kHeartH * 3};
+        const SDL_Rect dst{14 + i * 32 + wobble, 15, Sprites::kHeartW, Sprites::kHeartH};
         SDL_RenderCopy(r, tex, nullptr, &dst);
     }
 
@@ -464,7 +464,7 @@ void PlayScene::renderHud(SDL_Renderer* r) const {
     ui::drawPanel(r, SDL_Rect{panelX, 8, panelW, 38}, SDL_Color{20, 16, 40, 140}, SDL_Color{0, 0, 0, 0});
     if (SDL_Texture* coin = game_.sprites().coin()) {
         const SDL_Rect src{0, 0, Sprites::kCoinSize, Sprites::kCoinSize};
-        const SDL_Rect dst{panelX + 10, 15, Sprites::kCoinSize * 2, Sprites::kCoinSize * 2};
+        const SDL_Rect dst{panelX + 10, 15, Sprites::kCoinSize, Sprites::kCoinSize};
         SDL_RenderCopy(r, coin, &src, &dst);
     }
     font.drawShadowed(r, panelX + 42, 16, coinText, 3, ui::kYellow);
@@ -547,16 +547,24 @@ void PlayScene::renderSignDialog(SDL_Renderer* r) const {
     const SDL_Rect box{40, 300, kScreenWidth - 80, 150};
     ui::drawPanel(r, box, SDL_Color{250, 240, 220, 240}, SDL_Color{100, 60, 32, 255});
 
-    // Word-wrap the sign text to the box (scale 2: 12 px per character).
+    // Word-wrap the sign text to the box width.
     const std::string& text = level_.signs[static_cast<size_t>(signIndex_)].text;
-    const size_t perLine = static_cast<size_t>((box.w - 40) / (BitmapFont::kCellW * 2));
+    const int maxW = box.w - 40;
     int y = box.y + 20;
     size_t pos = 0;
     while (pos < text.size() && y < box.y + box.h - 40) {
-        size_t len = std::min(perLine, text.size() - pos);
-        if (pos + len < text.size()) {
-            const size_t space = text.rfind(' ', pos + len);
-            if (space != std::string::npos && space > pos) len = space - pos;
+        // Take whole words while they fit; a single over-long word is cut.
+        size_t len = 0;
+        for (size_t end = pos; end <= text.size(); ++end) {
+            if (end != text.size() && text[end] != ' ') continue;
+            if (BitmapFont::textWidth(std::string_view(text).substr(pos, end - pos), 2) > maxW) break;
+            len = end - pos;
+        }
+        if (len == 0) {
+            len = 1;
+            while (pos + len < text.size() &&
+                   BitmapFont::textWidth(std::string_view(text).substr(pos, len + 1), 2) <= maxW)
+                ++len;
         }
         font.draw(r, box.x + 20, y, std::string_view(text).substr(pos, len), 2, ui::kInk);
         y += 22;
@@ -589,7 +597,7 @@ void PlayScene::renderCollectionHud(SDL_Renderer* r) const {
     const bool gems = it.gemsTotal() > 0;
     if (stars == 0 && !gems) return;
 
-    constexpr int icon = Sprites::kItemSize * 2;
+    constexpr int icon = Sprites::kItemSize;
     const int width = stars * (icon + 4) + (gems ? icon + 40 : 0) + 12;
     const int x0 = kScreenWidth / 2 - width / 2;
     ui::drawPanel(r, SDL_Rect{x0, 8, width, 38}, SDL_Color{20, 16, 40, 140}, SDL_Color{0, 0, 0, 0});
@@ -618,7 +626,7 @@ void PlayScene::renderPowerHud(SDL_Renderer* r) const {
     if (!items) return;
     const PowerUpState& powers = session_->powers();
     const BitmapFont& font = game_.font();
-    constexpr int icon = Sprites::kItemSize * 2;
+    constexpr int icon = Sprites::kItemSize;
     int x = 6;
     const int y = 50;
 
@@ -773,7 +781,7 @@ void PlayScene::renderClearPanel(SDL_Renderer* r) const {
     // Stars found, popping in one by one.
     const ItemField& items = session_->items();
     if (SDL_Texture* tex = game_.sprites().items(); tex && items.starsTotal() > 0) {
-        constexpr int icon = Sprites::kItemSize * 3;
+        constexpr int icon = Sprites::kItemSize * 3 / 2;
         const int total = items.starsTotal();
         const int x0 = kScreenWidth / 2 - (total * (icon + 6) - 6) / 2;
         for (int i = 0; i < total; ++i) {
@@ -810,8 +818,8 @@ void PlayScene::renderClearPanel(SDL_Renderer* r) const {
 
     if (st >= kClearInputDelay) {
         const bool last = levels::nextLevelId(levelId_).empty();
-        font.drawCentered(r, kScreenWidth / 2, kTop + 200, last ? "A  BACK TO TITLE" : "A  NEXT LEVEL", 2, ui::kWhite);
-        font.drawCentered(r, kScreenWidth / 2, kTop + 220, "B  PLAY AGAIN", 2, ui::kGrey);
+        font.drawCentered(r, kScreenWidth / 2 - 96, kTop + 206, last ? "A  TITLE" : "A  NEXT LEVEL", 2, ui::kWhite);
+        font.drawCentered(r, kScreenWidth / 2 + 96, kTop + 206, "B  PLAY AGAIN", 2, ui::kGrey);
     }
 }
 

@@ -32,7 +32,7 @@ int CoinField::collect(Vec2 playerCenter, Effects* effects) {
 
 void CoinField::render(SDL_Renderer* r, SDL_Texture* sheet, Vec2 camera, float time) const {
     if (!sheet) return;
-    constexpr int size = Sprites::kCoinSize * kPixelScale;
+    constexpr int size = Sprites::kCoinSize;
     // Spin sequence 0,1,2,1(mirrored).
     static const int kFrames[4] = {0, 1, 2, 1};
     const float viewLeft = camera.x - size;
@@ -121,7 +121,7 @@ bool ItemField::starCollected(int index) const {
 
 void ItemField::render(SDL_Renderer* r, SDL_Texture* items, Vec2 camera, float time) const {
     if (!items) return;
-    constexpr int size = Sprites::kItemSize * kPixelScale;
+    constexpr int size = Sprites::kItemSize;
     for (size_t i = 0; i < items_.size(); ++i) {
         const Item& it = items_[i];
         if (it.taken) continue;
@@ -191,8 +191,8 @@ void HeartPickups::render(SDL_Renderer* r, SDL_Texture* heart, Vec2 camera, floa
         if (sx < -32 || sy < -32 || sx > kScreenWidth + 32 || sy > kScreenHeight + 32) continue;
         // Gentle "heartbeat" pulse.
         const float beat = std::fabs(std::sin(time * 3.0f + static_cast<float>(i)));
-        const int w = Sprites::kHeartW * 2 + static_cast<int>(beat * 4.0f);
-        const int h = Sprites::kHeartH * 2 + static_cast<int>(beat * 4.0f);
+        const int w = Sprites::kHeartW * 3 / 4 + static_cast<int>(beat * 3.0f);
+        const int h = Sprites::kHeartH * 3 / 4 + static_cast<int>(beat * 3.0f);
         draw::fillEllipse(r, sx, sy + 12, 7, 2, SDL_Color{0, 0, 0, 60});
         const SDL_Rect dst{sx - w / 2, sy - h / 2 - 2, w, h};
         SDL_RenderCopy(r, heart, nullptr, &dst);

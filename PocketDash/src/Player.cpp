@@ -211,8 +211,8 @@ void Player::render(SDL_Renderer* r, SDL_Texture* sheet, Vec2 camera) const {
     const SDL_Rect src{animFrame_ * Sprites::kPlayerFrameW, row * Sprites::kPlayerFrameH, Sprites::kPlayerFrameW,
                        Sprites::kPlayerFrameH};
 
-    int w = static_cast<int>(std::lround(Sprites::kPlayerFrameW * kPixelScale * vs));
-    int h = static_cast<int>(std::lround(Sprites::kPlayerFrameH * kPixelScale * vs));
+    int w = static_cast<int>(std::lround(Sprites::kPlayerFrameW * vs));
+    int h = static_cast<int>(std::lround(Sprites::kPlayerFrameH * vs));
     if (squashTimer_ > 0.0f) { // landing squash
         w += 6;
         h -= 6;
@@ -220,7 +220,7 @@ void Player::render(SDL_Renderer* r, SDL_Texture* sheet, Vec2 camera) const {
         w -= 4;
         h += 4;
     }
-    const int bob = (animFrame_ == 1 && !isAirborne()) ? -kPixelScale : 0;
+    const int bob = (animFrame_ == 1 && !isAirborne()) ? -2 : 0;
     const int baseY = sy + 3 - static_cast<int>(std::lround(z_)) + bob;
 
     // Dash afterimages: two faded copies trailing behind.

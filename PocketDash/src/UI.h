@@ -9,9 +9,14 @@
 
 namespace pd {
 
-// Chunky built-in 5x7 pixel font (6x8 cell), baked into one texture at
-// startup. Needs no font file, is crisp at every integer scale and costs a
-// single texture bind per string. Lower-case letters render as capitals.
+// Game font. Normally a smooth anti-aliased TrueType face (assets/fonts/),
+// pre-rendered into one glyph atlas per size at startup so drawing a string
+// costs one texture bind and no per-frame rasterising. If the font file or
+// SDL_ttf is unavailable it falls back to a built-in 5x7 pixel font (6x8
+// cell, lower-case letters render as capitals).
+//
+// Sizes are given as an integer `scale`: text at scale N occupies a line of
+// lineHeight(N) = 8*N pixels in either backend, so layouts are shared.
 class BitmapFont {
 public:
     static constexpr int kGlyphW = 5;
@@ -19,7 +24,12 @@ public:
     static constexpr int kCellW = 6;
     static constexpr int kCellH = 8;
 
-    bool create(SDL_Renderer* renderer);
+    static constexpr int kMaxScale = 8;
+
+    // `ttfPath` may be empty or missing; the pixel font is then used.
+    bool create(SDL_Renderer* renderer, const std::string& ttfPath = {});
+    ~BitmapFont();
+    bool smooth() const { return smooth_; }
 
     void draw(SDL_Renderer* r, int x, int y, std::string_view text, int scale, SDL_Color color) const;
     // Draws with a 1-scaled-pixel drop shadow for readability on busy backgrounds.
@@ -35,7 +45,23 @@ public:
     static bool validateGlyphData(std::string* error);
 
 private:
+    struct GlyphInfo {
+        SDL_Rect src{0, 0, 0, 0}; // in the atlas of its size
+        int offsetY = 0;           // from the line top to the bitmap top
+        int advance = 0;
+    };
+    struct SmoothSize {
+        TexturePtr atlas;
+        GlyphInfo glyphs[96];      // characters 32..127
+    };
+
+    bool createSmooth(SDL_Renderer* renderer, const std::string& ttfPath);
+    const GlyphInfo* smoothGlyph(int scale, char c) const;
+    void drawSmooth(SDL_Renderer* r, int x, int y, std::string_view text, int scale, SDL_Color color) const;
+
     TexturePtr atlas_;
+    bool smooth_ = false;
+    SmoothSize sizes_[kMaxScale + 1];
 };
 
 namespace ui {
@@ -48,10 +74,11 @@ constexpr SDL_Color kPink{255, 120, 160, 255};
 constexpr SDL_Color kSky{120, 200, 255, 255};
 constexpr SDL_Color kMint{120, 230, 160, 255};
 constexpr SDL_Color kGrey{150, 150, 170, 255};
-constexpr SDL_Color kPanel{34, 28, 60, 220};
-constexpr SDL_Color kPanelBorder{255, 255, 255, 255};
+constexpr SDL_Color kPanel{30, 36, 58, 225};
+constexpr SDL_Color kPanelBorder{255, 255, 255, 200};
 
-// Rounded-looking framed panel (alpha-blended fill + 2px border).
+// Rounded, anti-aliased panel: soft shadow, alpha-blended fill and an
+// optional 2 px border (alpha 0 = none).
 void drawPanel(SDL_Renderer* r, const SDL_Rect& rect, SDL_Color fill = kPanel, SDL_Color border = kPanelBorder);
 
 // Full-screen translucent dim, e.g. behind the pause menu.
